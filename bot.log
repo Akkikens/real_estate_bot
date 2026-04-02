@@ -65,3 +65,16 @@
 2026-04-01 23:30:17,143 [INFO] ingestion.craigslist_adapter:   -> 0 FSBO listings from Craigslist/El Cerrito
 2026-04-01 23:30:22,149 [INFO] ingestion.craigslist_adapter: Fetching Craigslist FSBO for 'emeryville' (max_price=$850000.0)
 2026-04-01 23:30:32,412 [INFO] ingestion.craigslist_adapter:   -> 0 FSBO listings from Craigslist/Emeryville
+2026-04-01 23:30:37,417 [INFO] ingestion.craigslist_adapter: Fetching Craigslist FSBO for 'fremont' (max_price=$850000.0)
+2026-04-01 23:30:47,659 [INFO] ingestion.craigslist_adapter:   -> 5 FSBO listings from Craigslist/Fremont
+2026-04-01 23:30:57,672 [INFO] database.db: Database initialized at: sqlite:///./real_estate.db
+2026-04-01 23:30:57,745 [INFO] ingestion.craigslist_adapter: Fetching Craigslist FSBO for 'richmond' (max_price=$850000.0)
+2026-04-01 23:31:07,947 [INFO] ingestion.craigslist_adapter:   -> 7 FSBO listings from Craigslist/Richmond
+2026-04-01 23:31:12,951 [INFO] ingestion.craigslist_adapter: Fetching Craigslist FSBO for 'oakland' (max_price=$850000.0)
+2026-04-01 23:31:23,197 [INFO] ingestion.craigslist_adapter:   -> 34 FSBO listings from Craigslist/Oakland
+2026-04-01 23:31:28,203 [INFO] ingestion.craigslist_adapter: Fetching Craigslist FSBO for 'berkeley' (max_price=$850000.0)
+2026-04-01 23:31:38,422 [INFO] ingestion.craigslist_adapter:   -> 3 FSBO listings from Craigslist/Berkeley
+2026-04-01 23:31:43,426 [INFO] ingestion.craigslist_adapter: Fetching Craigslist FSBO for 'albany' (max_price=$850000.0)
+2026-04-01 23:31:53,630 [INFO] ingestion.craigslist_adapter:   -> 0 FSBO listings from Craigslist/Albany
+2026-04-01 23:31:58,635 [INFO] ingestion.craigslist_adapter: Fetching Craigslist FSBO for 'el cerrito' (max_price=$850000.0)
+2026-04-01 23:32:08,865 [INFO] ingestion.craigslist_adapter:   -> 0 FSBO listings from Craigslist/El Cerrito
