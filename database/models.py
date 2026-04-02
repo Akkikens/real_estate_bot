@@ -58,6 +58,7 @@ class Property(Base):
     estimated_taxes_annual: Mapped[Optional[float]] = mapped_column(Float)
     days_on_market: Mapped[Optional[int]] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(30), default="active")  # active, pending, sold
+    listing_type: Mapped[str] = mapped_column(String(10), default="sale")  # sale, rental
 
     # ── Financials (estimated) ────────────────────────────────────────────────
     estimated_rent_monthly: Mapped[Optional[float]] = mapped_column(Float)

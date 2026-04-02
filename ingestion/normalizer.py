@@ -33,7 +33,7 @@ CANONICAL_FIELDS = [
     "estimated_rent_monthly",
     "listing_remarks",
     "agent_name", "agent_email", "agent_phone", "brokerage",
-    "source", "external_id", "listing_url",
+    "source", "external_id", "listing_url", "listing_type",
     "walk_score", "transit_score", "bart_distance_miles",
     "school_rating", "crime_index",
 ]

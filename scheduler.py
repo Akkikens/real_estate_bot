@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 
 logger = logging.getLogger(__name__)
@@ -34,8 +35,11 @@ logging.getLogger("apscheduler").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
-def run_ingest_pipeline():
-    """Main scheduled job: ingest → score → alert."""
+def _run_pipeline(listing_type: str):
+    """
+    Core pipeline: ingest → score → alert.
+    listing_type: "sale" or "rental"
+    """
     from config import settings
     from database.db import get_db, init_db
     from database.models import Property
@@ -51,23 +55,35 @@ def run_ingest_pipeline():
     from ingestion.realtor_adapter import RealtorAdapter
     from ingestion.craigslist_adapter import CraigslistAdapter
 
-    adapters = [
-        RedfinAdapter(),
-        ZillowAdapter(),
-        RealtorAdapter(),
-        CraigslistAdapter(),
-    ]
+    if listing_type == "rental":
+        max_price = float(os.getenv("RENTAL_MAX_PRICE", "2500"))
+        cities = [c.strip() for c in os.getenv(
+            "RENTAL_TARGET_CITIES",
+            "Oakland,Berkeley,Alameda,Emeryville,Albany,El Cerrito,Richmond"
+        ).split(",") if c.strip()]
+        adapters = [
+            RedfinAdapter(listing_type="rental"),
+            CraigslistAdapter(listing_type="rental"),
+        ]
+    else:
+        max_price = settings.BUYER_MAX_PRICE
+        cities = settings.BUYER_TARGET_CITIES
+        adapters = [
+            RedfinAdapter(),
+            ZillowAdapter(),
+            RealtorAdapter(),
+            CraigslistAdapter(),
+        ]
 
+    label = listing_type.upper()
     total_new = 0
     with get_db() as db:
         for adapter in adapters:
-            logger.info("Ingesting from %s...", adapter.source_name)
+            logger.info("[%s] Ingesting from %s...", label, adapter.source_name)
             try:
-                listings = adapter.fetch_listings(
-                    settings.BUYER_TARGET_CITIES,
-                    settings.BUYER_MAX_PRICE,
-                )
+                listings = adapter.fetch_listings(cities, max_price)
                 for normalized in listings:
+                    normalized["listing_type"] = listing_type
                     sanity = sanity_check(normalized)
                     if not sanity.passed:
                         log_anomaly(db, normalized, sanity)
@@ -82,12 +98,84 @@ def run_ingest_pipeline():
         props = db.query(Property).filter(
             Property.status == "active",
             Property.is_archived == False,
+            Property.listing_type == listing_type,
         ).all()
 
         n_alerts = check_and_alert(db, props)
         db.commit()
 
-    logger.info("Pipeline complete. New: %d | Alerts sent: %d", total_new, n_alerts)
+    logger.info("[%s] Pipeline complete. New: %d | Alerts sent: %d", label, total_new, n_alerts)
+
+
+def run_ingest_pipeline():
+    """Scheduled job: ingest FOR-SALE listings → score → alert."""
+    _run_pipeline("sale")
+
+
+def run_rental_pipeline():
+    """Scheduled job: ingest RENTAL listings → score → send SMS digest."""
+    _run_pipeline("rental")
+    _send_rental_digest()
+
+
+def _send_rental_digest():
+    """Send SMS with top rental leads (sorted by score, then price)."""
+    from database.db import get_db, init_db
+    from database.models import Property
+    from config import settings
+
+    if not settings.SMS_ENABLED:
+        return
+
+    init_db()
+    with get_db() as db:
+        # Get new rentals from last 24 hours, ordered by score then price
+        from datetime import datetime, timedelta
+        cutoff = datetime.utcnow() - timedelta(hours=24)
+        rentals = (
+            db.query(Property)
+            .filter(
+                Property.listing_type == "rental",
+                Property.status == "active",
+                Property.is_archived == False,
+                Property.first_seen_at >= cutoff,
+            )
+            .order_by(Property.total_score.desc().nullsfirst(), Property.list_price.asc())
+            .limit(10)
+            .all()
+        )
+
+        if not rentals:
+            logger.info("No new rentals in last 24h — skipping digest SMS.")
+            return
+
+        lines = [f"🏠 Top {len(rentals)} New Rentals Today:\n"]
+        for i, p in enumerate(rentals, 1):
+            beds = f"{p.beds}BR" if p.beds else "?"
+            price = f"${p.list_price:,.0f}" if p.list_price else "?"
+            city = p.city or "?"
+            lines.append(f"{i}. {city} {beds} {price}")
+            lines.append(f"   {p.address[:60]}")
+            if p.listing_url:
+                lines.append(f"   {p.listing_url[:80]}")
+            lines.append("")
+
+        body = "\n".join(lines)
+
+        try:
+            from twilio.rest import Client
+            client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+            # Split into chunks if too long
+            for chunk_start in range(0, len(body), 1500):
+                chunk = body[chunk_start:chunk_start + 1500]
+                client.messages.create(
+                    body=chunk,
+                    from_=settings.TWILIO_FROM_NUMBER,
+                    to=settings.ALERT_TO_PHONE,
+                )
+            logger.info("Rental digest SMS sent (%d listings).", len(rentals))
+        except Exception as exc:
+            logger.error("Rental digest SMS failed: %s", exc)
 
 
 def run_daily_report():
@@ -135,12 +223,21 @@ def start_scheduler():
 
     scheduler = BlockingScheduler(timezone="America/Los_Angeles")
 
-    # Every 4 hours: full ingest + alert pipeline
+    # Every 4 hours: for-sale listings ingest + alert pipeline
     scheduler.add_job(
         run_ingest_pipeline,
         trigger=IntervalTrigger(hours=4),
-        id="ingest_pipeline",
-        name="Ingest + Score + Alert",
+        id="sale_pipeline",
+        name="For-Sale Ingest + Score + Alert",
+        replace_existing=True,
+    )
+
+    # Daily at 9:00 AM PT: rental listings ingest + alert
+    scheduler.add_job(
+        run_rental_pipeline,
+        trigger=CronTrigger(hour=9, minute=0, timezone="America/Los_Angeles"),
+        id="rental_pipeline",
+        name="Rental Ingest + Score + Alert",
         replace_existing=True,
     )
 
@@ -162,7 +259,7 @@ def start_scheduler():
         replace_existing=True,
     )
 
-    logger.info("Scheduler started. Jobs: ingest (4h), report (8am), crm (30m)")
+    logger.info("Scheduler started. Jobs: sales (4h), rentals (9am), report (8am), crm (30m)")
     logger.info("Press Ctrl+C to stop.")
 
     try:
@@ -174,12 +271,21 @@ def start_scheduler():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Property Bot Scheduler")
-    parser.add_argument("--once", action="store_true", help="Run pipeline once then exit")
+    parser.add_argument("--once", action="store_true", help="Run both pipelines once then exit")
+    parser.add_argument("--sales", action="store_true", help="Run for-sale pipeline only")
+    parser.add_argument("--rentals", action="store_true", help="Run rental pipeline only")
     args = parser.parse_args()
 
-    if args.once:
-        logger.info("Running single pipeline pass...")
+    if args.sales:
+        logger.info("Running FOR-SALE pipeline...")
         run_ingest_pipeline()
+    elif args.rentals:
+        logger.info("Running RENTAL pipeline...")
+        run_rental_pipeline()
+    elif args.once:
+        logger.info("Running both pipelines...")
+        run_ingest_pipeline()
+        run_rental_pipeline()
         run_daily_report()
     else:
         start_scheduler()

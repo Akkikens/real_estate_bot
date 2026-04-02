@@ -44,10 +44,18 @@ logger = logging.getLogger(__name__)
 # SF Bay Area Craigslist search base
 # eby = East Bay sub-area; rea = real estate for sale (by owner)
 # reb = real estate by broker (also useful)
-CL_SEARCH_URLS = [
+# apa = apartments / housing for rent
+CL_SALE_URLS = [
     "https://sfbay.craigslist.org/search/eby/rea",  # FSBO
     "https://sfbay.craigslist.org/search/eby/reb",  # Broker listings
 ]
+
+CL_RENTAL_URLS = [
+    "https://sfbay.craigslist.org/search/eby/apa",  # Apartments/rentals
+]
+
+# Legacy alias
+CL_SEARCH_URLS = CL_SALE_URLS
 
 # City name to Craigslist search query
 CL_CITY_QUERIES: dict[str, str] = {
@@ -64,6 +72,7 @@ CL_CITY_QUERIES: dict[str, str] = {
     "Pinole":       "pinole",
     "Hercules":     "hercules",
     "Vallejo":      "vallejo",
+    "Alameda":      "alameda",
 }
 
 # Regex patterns to extract data from CL post titles
@@ -87,10 +96,11 @@ class CraigslistAdapter(SourceAdapter):
 
     source_name = "craigslist"
 
-    def __init__(self):
+    def __init__(self, listing_type: str = "sale"):
         from config import settings
         delay = getattr(settings, "CRAIGSLIST_DELAY_SECONDS", 5.0)
         super().__init__(delay_seconds=delay)
+        self._listing_type = listing_type  # "sale" or "rental"
 
     def fetch_listings(self, cities: list[str], max_price: float) -> list[dict[str, Any]]:
         all_listings: list[dict[str, Any]] = []
@@ -120,14 +130,21 @@ class CraigslistAdapter(SourceAdapter):
         return all_listings
 
     def _fetch_city(self, query: str, max_price: float, city_name: str) -> list[dict[str, Any]]:
-        """Fetch listings from CL search pages (both FSBO and broker)."""
+        """Fetch listings from CL search pages (sale or rental)."""
         all_results = []
 
-        for search_url in CL_SEARCH_URLS:
+        if self._listing_type == "rental":
+            search_urls = CL_RENTAL_URLS
+            min_price = "500"  # filter out spam/fake $1 listings
+        else:
+            search_urls = CL_SALE_URLS
+            min_price = "100000"
+
+        for search_url in search_urls:
             params = {
                 "query": query,
                 "max_price": str(int(max_price)),
-                "min_price": "100000",
+                "min_price": min_price,
             }
 
             try:
@@ -239,9 +256,13 @@ class CraigslistAdapter(SourceAdapter):
         if not url or not price:
             return None
 
-        # Filter obviously non-residential
-        if price < 50_000:
-            return None
+        # Filter obviously non-residential / spam
+        if self._listing_type == "rental":
+            if price < 400 or price > 10_000:
+                return None
+        else:
+            if price < 50_000:
+                return None
 
         # ── From JSON-LD ──
         beds = jsonld.get("numberOfBedrooms")
@@ -295,7 +316,7 @@ class CraigslistAdapter(SourceAdapter):
             "days_on_market":   None,
             "hoa_monthly":      0,
             "status":           "active",
-            "listing_remarks":  f"[FSBO/Craigslist] {title}",
+            "listing_remarks":  f"[CL {'Rental' if self._listing_type == 'rental' else 'FSBO'}] {title}",
             "listing_url":      url,
             "external_id":      external_id,
             "latitude":         lat,

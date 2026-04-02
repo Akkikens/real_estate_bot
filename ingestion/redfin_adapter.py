@@ -45,6 +45,7 @@ REDFIN_CITY_REGION_IDS: dict[str, int] = {
     "Emeryville":   17342,
     "Pinole":       17416,
     "Hercules":     17363,
+    "Alameda":      17277,
 }
 
 SEARCH_URL = "https://www.redfin.com/stingray/api/gis-csv"
@@ -60,6 +61,7 @@ RECOMMENDED_START_CITIES = [
 class RedfinAdapter(SourceAdapter):
     """
     Fetches active residential listings from Redfin for target cities.
+    Supports both for-sale and rental listings via listing_type parameter.
 
     IMPORTANT — Getting real data:
     Redfin may return empty results or redirect to a CAPTCHA if requests look
@@ -81,17 +83,22 @@ class RedfinAdapter(SourceAdapter):
     Usage:
         adapter = RedfinAdapter()
         listings = adapter.fetch_listings(["Richmond", "El Cerrito"], max_price=700000)
+
+        # For rentals:
+        adapter = RedfinAdapter(listing_type="rental")
+        listings = adapter.fetch_listings(["Oakland", "Berkeley"], max_price=2500)
     """
 
     source_name = "redfin"
 
-    def __init__(self):
+    def __init__(self, listing_type: str = "sale"):
         super().__init__(delay_seconds=settings.REDFIN_DELAY_SECONDS)
-        # Optional: pass browser cookies from .env to avoid bot detection
         self._cookie = os.getenv("REDFIN_COOKIE", "")
+        self._listing_type = listing_type  # "sale" or "rental"
 
     def fetch_listings(self, cities: list[str], max_price: float) -> list[dict[str, Any]]:
         all_listings: list[dict[str, Any]] = []
+        label = "rental" if self._listing_type == "rental" else "for-sale"
 
         for city in cities:
             region_id = REDFIN_CITY_REGION_IDS.get(city)
@@ -99,11 +106,11 @@ class RedfinAdapter(SourceAdapter):
                 logger.warning("No Redfin region ID for city: %s — skipping", city)
                 continue
 
-            logger.info("Fetching Redfin listings for %s (region=%s, max_price=$%s)", city, region_id, max_price)
+            logger.info("Fetching Redfin %s listings for %s (region=%s, max_price=$%s)", label, city, region_id, max_price)
 
             try:
                 rows = self._fetch_city(region_id=region_id, max_price=max_price)
-                logger.info("  → %d listings from Redfin/%s", len(rows), city)
+                logger.info("  → %d %s listings from Redfin/%s", len(rows), label, city)
                 all_listings.extend(rows)
             except Exception as exc:
                 logger.error("Redfin fetch failed for %s: %s", city, exc)
@@ -115,22 +122,39 @@ class RedfinAdapter(SourceAdapter):
     def _fetch_city(self, region_id: int, max_price: float) -> list[dict[str, Any]]:
         """Fetch CSV data from Redfin's GIS endpoint and parse into dicts."""
 
-        params = {
-            "al": 1,                    # active listings
-            "market": "sanfrancisco",
-            "max_price": int(max_price),
-            "min_beds": 2,
-            "num_homes": 350,
-            "ord": "redfin-recommended-asc",
-            "page_number": 1,
-            "region_id": region_id,
-            "region_type": 6,           # 6 = city
-            "sf": "1,2,3,5,6,7",       # status flags: active + coming soon
-            "start": 0,
-            "status": 9,
-            "uipt": "1,2,3",            # 1=SFR, 2=Condo, 3=Townhouse; add 4,5,6 for multi-family
-            "v": 8,
-        }
+        if self._listing_type == "rental":
+            params = {
+                "al": 1,
+                "market": "sanfrancisco",
+                "max_price": int(max_price),
+                "num_homes": 350,
+                "ord": "redfin-recommended-asc",
+                "page_number": 1,
+                "region_id": region_id,
+                "region_type": 6,
+                "sf": "1,2,3,5,6,7",
+                "start": 0,
+                "status": 1,                # 1 = for rent
+                "uipt": "1,2,3,4,5,6",     # all property types
+                "v": 8,
+            }
+        else:
+            params = {
+                "al": 1,                    # active listings
+                "market": "sanfrancisco",
+                "max_price": int(max_price),
+                "min_beds": 2,
+                "num_homes": 350,
+                "ord": "redfin-recommended-asc",
+                "page_number": 1,
+                "region_id": region_id,
+                "region_type": 6,           # 6 = city
+                "sf": "1,2,3,5,6,7",       # status flags: active + coming soon
+                "start": 0,
+                "status": 9,
+                "uipt": "1,2,3",            # 1=SFR, 2=Condo, 3=Townhouse; add 4,5,6 for multi-family
+                "v": 8,
+            }
 
         extra_headers = {}
         if self._cookie:
@@ -201,6 +225,7 @@ class RedfinAdapter(SourceAdapter):
             "latitude":         row.get("LATITUDE") or row.get("Latitude"),
             "longitude":        row.get("LONGITUDE") or row.get("Longitude"),
             "source":           "redfin",
+            "listing_type":     self._listing_type,
         }
 
         return normalize(raw, source="redfin")
