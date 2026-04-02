@@ -173,6 +173,43 @@ def check(normalized: dict) -> SanityResult:
                     ),
                 )
 
+    # ── 7. Craigslist scam/spam detection ────────────────────────────────────
+    if source == "craigslist":
+        remarks = (normalized.get("listing_remarks") or "").lower()
+        title_lower = (normalized.get("address") or "").lower() + " " + remarks
+
+        # Common CL real estate scam signals
+        scam_signals = [
+            "wire transfer", "western union", "money gram", "moneygram",
+            "send deposit", "send money", "cash app", "zelle only",
+            "sight unseen", "no showing", "cannot show",
+            "section 8 only", "hud program", "government program",
+            "text only", "text me at", "call this number",
+            "nigerian", "foreign owner",
+        ]
+        scam_matches = [s for s in scam_signals if s in title_lower]
+        if scam_matches:
+            return SanityResult(
+                passed=False,
+                rejection_code="CL_SCAM_SIGNALS",
+                rejection_reason=(
+                    f"Craigslist listing has scam signals: {', '.join(scam_matches[:3])}. "
+                    "Flagged for safety — manually review if you think it's legitimate."
+                ),
+            )
+
+        # Duplicate/spam poster detection: extremely generic titles
+        spam_titles = [
+            "great investment", "must see", "won't last",
+            "amazing deal", "best deal", "incredible opportunity",
+        ]
+        if any(t in title_lower for t in spam_titles) and not price:
+            return SanityResult(
+                passed=False,
+                rejection_code="CL_SPAM_TITLE",
+                rejection_reason="Generic spam title with no price — likely not a real listing.",
+            )
+
     # ── All checks passed ─────────────────────────────────────────────────────
     return SanityResult(passed=True, rejection_code=None, rejection_reason=None)
 

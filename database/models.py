@@ -40,7 +40,7 @@ class Property(Base):
     address: Mapped[str] = mapped_column(String(255), nullable=False)
     city: Mapped[str] = mapped_column(String(100))
     state: Mapped[str] = mapped_column(String(2), default="CA")
-    zip_code: Mapped[str] = mapped_column(String(10))
+    zip_code: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     latitude: Mapped[Optional[float]] = mapped_column(Float)
     longitude: Mapped[Optional[float]] = mapped_column(Float)
 

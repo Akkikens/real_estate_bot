@@ -862,3 +862,69 @@ def run(
 
     # Step 3: Report
     report(save=False)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# add — manually add a property (FB Marketplace, word of mouth, etc.)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.command()
+def add(
+    address: str = typer.Argument(help="Full street address"),
+    city: str = typer.Argument(help="City name"),
+    price: float = typer.Argument(help="List price"),
+    beds: int = typer.Option(None, "--beds", "-b"),
+    baths: float = typer.Option(None, "--baths"),
+    sqft: int = typer.Option(None, "--sqft"),
+    lot: int = typer.Option(None, "--lot", help="Lot size in sqft"),
+    url: str = typer.Option("", "--url", "-u", help="Listing URL (FB Marketplace, etc.)"),
+    notes: str = typer.Option("", "--notes", "-n", help="Your notes about this property"),
+    source_name: str = typer.Option("manual", "--source", "-s", help="Source label (manual, facebook, word_of_mouth)"),
+):
+    """
+    Manually add a property you found (FB Marketplace, word of mouth, driving, etc.).
+
+    Example:
+      python3 main.py add "123 Main St" Richmond 550000 --beds 3 --baths 2 --lot 5500
+      python3 main.py add "456 Oak Ave" Oakland 650000 --url "https://fb.me/abc" --source facebook
+    """
+    _init()
+
+    from database.db import get_db
+    from ingestion.normalizer import normalize, upsert_property
+    from scoring.engine import score_and_update
+
+    raw = {
+        "address":       address,
+        "city":          city,
+        "state":         "CA",
+        "zip_code":      "",
+        "list_price":    price,
+        "beds":          beds,
+        "baths":         baths,
+        "sqft":          sqft,
+        "lot_size_sqft": lot,
+        "status":        "active",
+        "listing_url":   url or f"manual://{source_name}",
+        "external_id":   f"MANUAL-{address[:20].replace(' ', '-')}",
+        "source":        source_name,
+        "listing_remarks": notes or f"Manually added from {source_name}",
+    }
+
+    normalized = normalize(raw, source=source_name)
+
+    with get_db() as db:
+        prop, created = upsert_property(db, normalized)
+        score_and_update(prop)
+        if notes:
+            prop.notes = notes
+        db.commit()
+
+        action = "Added" if created else "Updated"
+        score_val = prop.total_score or 0
+        rating = prop.rating or "skip"
+        console.print(
+            f"\n[green]{action}:[/green] {prop.address}, {prop.city} — "
+            f"${prop.list_price:,.0f} — Score: {score_val:.0f} ({rating.upper()})"
+        )
+        console.print(f"[dim]Run [bold]python3 main.py show \"{address}\"[/bold] for full detail.[/dim]")
