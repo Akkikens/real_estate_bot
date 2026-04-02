@@ -1,0 +1,112 @@
+# ─── Scoring Weights ──────────────────────────────────────────────────────────
+# Each dimension is scored 0–10 internally; weights sum to 1.0
+# Final score = sum(dimension_score × weight) × 10  →  0–100 range
+#
+# Tune these to shift emphasis.  E.g., raise adu_upside if ADU legislation
+# makes it easier; raise deal_opportunity when market is slow.
+
+weights:
+  # Focus: SF-adjacent East Bay (Oakland, Berkeley, Richmond, Fremont, Emeryville)
+  # Transit is a primary value driver for tenants in this market.
+  # House-hacking and rental income are the core affordability levers at these prices.
+  price_fit:            0.18   # Slightly reduced — budget stretches to 850k for right deal
+  house_hack_potential: 0.20   # Keep high — critical affordability tool at these prices
+  rental_income:        0.15   # Strong tenant demand in SF commuter corridor
+  adu_upside:           0.12   # SB9/ADU legislation actively improving in Oakland/Berkeley
+  transit_access:       0.13   # Raised — SF proximity is a top demand driver for tenants
+  neighborhood:         0.08   # Schools, walkability, demand
+  deal_opportunity:     0.09   # Slightly reduced — less inventory = fewer stale deals
+  lot_expansion:        0.05   # Large lots harder to find near SF but worth flagging
+
+# Penalty applied AFTER score calculation (subtracted, not weighted)
+# Range 0–20 points deducted
+penalty:
+  complexity_max: 15           # Max penalty for rehab/complexity risk
+
+# Thresholds for categorical ratings
+ratings:
+  excellent:  80
+  good:       65
+  watch:      50
+  skip:       0
+
+# Price tiers vs. buyer budget (BUYER_MAX_PRICE from .env)
+price_bands:
+  - max_fraction: 0.70    # ≤70% of max budget → full 10 pts
+    score: 10
+  - max_fraction: 0.80    # 71–80%             → 8 pts
+    score: 8
+  - max_fraction: 0.90    # 81–90%             → 6 pts
+    score: 6
+  - max_fraction: 1.00    # 91–100%            → 4 pts
+    score: 4
+  - max_fraction: 1.10    # 101–110%           → 2 pts
+    score: 2
+  - max_fraction: 999     # >110%              → 0 pts
+    score: 0
+
+# ADU / house-hack keywords to detect in listing remarks
+adu_keywords:
+  - ADU
+  - accessory dwelling
+  - in-law
+  - in law
+  - inlaw
+  - junior ADU
+  - JADU
+  - granny flat
+  - cottage
+  - second unit
+  - separate entrance
+  - separate entry
+  - two homes
+  - two units
+  - legal unit
+  - duplex
+  - triplex
+  - lot split
+  - SB9
+  - extra dwelling
+  - detached unit
+  - basement unit
+  - garden unit
+
+# Value-add / deal-opportunity keywords
+deal_keywords:
+  - price reduced
+  - price drop
+  - motivated seller
+  - must sell
+  - as-is
+  - fixer
+  - fixer upper
+  - TLC
+  - handyman
+  - investor special
+  - priced to sell
+  - make offer
+  - bring all offers
+  - back on market
+  - sellers concession
+
+# Risk / complexity keywords (trigger penalty)
+risk_keywords:
+  - fire damage
+  - flood
+  - foundation issues
+  - full rebuild
+  - unpermitted
+  - code violation
+  - hazmat
+  - asbestos
+  - lead paint
+  - mold
+  - structural
+  - commercial zoning only
+  - SRO
+
+# Lot size tiers (sqft) for adu_upside scoring
+lot_size_tiers:
+  large:   6000    # ≥6000 sqft → strong ADU candidate
+  medium:  4000    # 4000–5999  → moderate
+  small:   2000    # <4000      → limited

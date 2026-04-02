@@ -1,0 +1,29 @@
+version: "3.9"
+
+services:
+  bot:
+    build: .
+    container_name: realestate_bot
+    volumes:
+      - ./real_estate.db:/app/real_estate.db
+      - ./bot.log:/app/bot.log
+      - ./.env:/app/.env:ro
+    command: python scheduler.py
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=sqlite:////app/real_estate.db
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3; sqlite3.connect('/app/real_estate.db')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  cli:
+    build: .
+    container_name: realestate_cli
+    volumes:
+      - ./real_estate.db:/app/real_estate.db
+      - ./.env:/app/.env:ro
+    profiles: ["cli"]
+    entrypoint: ["python", "main.py"]
+    command: ["--help"]
