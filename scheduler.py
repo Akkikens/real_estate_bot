@@ -46,6 +46,7 @@ def _run_pipeline(listing_type: str):
     from ingestion.normalizer import upsert_property
     from ingestion.sanity import check as sanity_check, log_anomaly
     from scoring.engine import score_and_update
+    from scoring.rental_scorer import score_rental_and_update
     from alerts.notifier import check_and_alert
 
     init_db()
@@ -54,6 +55,7 @@ def _run_pipeline(listing_type: str):
     from ingestion.zillow_adapter import ZillowAdapter
     from ingestion.realtor_adapter import RealtorAdapter
     from ingestion.craigslist_adapter import CraigslistAdapter
+    from ingestion.enrichment import enrich_properties
 
     if listing_type == "rental":
         max_price = float(os.getenv("RENTAL_MAX_PRICE", "2500"))
@@ -65,6 +67,7 @@ def _run_pipeline(listing_type: str):
             RedfinAdapter(listing_type="rental"),
             CraigslistAdapter(listing_type="rental"),
         ]
+        scorer = score_rental_and_update
     else:
         max_price = settings.BUYER_MAX_PRICE
         cities = settings.BUYER_TARGET_CITIES
@@ -74,6 +77,7 @@ def _run_pipeline(listing_type: str):
             RealtorAdapter(),
             CraigslistAdapter(),
         ]
+        scorer = score_and_update
 
     label = listing_type.upper()
     total_new = 0
@@ -89,7 +93,7 @@ def _run_pipeline(listing_type: str):
                         log_anomaly(db, normalized, sanity)
                         continue
                     prop, created = upsert_property(db, normalized)
-                    score_and_update(prop)
+                    scorer(prop)
                     if created:
                         total_new += 1
             except Exception as exc:
@@ -100,6 +104,14 @@ def _run_pipeline(listing_type: str):
             Property.is_archived == False,
             Property.listing_type == listing_type,
         ).all()
+
+        # Enrich properties missing BART distance (geocode + haversine)
+        n_enriched = enrich_properties(db, props)
+        if n_enriched:
+            logger.info("[%s] Enriched %d properties with BART distance", label, n_enriched)
+            # Re-score enriched properties
+            for prop in props:
+                scorer(prop)
 
         n_alerts = check_and_alert(db, props)
         db.commit()
@@ -119,12 +131,12 @@ def run_rental_pipeline():
 
 
 def _send_rental_digest():
-    """Send SMS with top rental leads (sorted by score, then price)."""
+    """Send digest via SMS + WhatsApp with top rental leads."""
     from database.db import get_db, init_db
     from database.models import Property
     from config import settings
 
-    if not settings.SMS_ENABLED:
+    if not settings.SMS_ENABLED and not settings.WHATSAPP_ENABLED:
         return
 
     init_db()
@@ -155,49 +167,66 @@ def _send_rental_digest():
             price = f"${p.list_price:,.0f}" if p.list_price else "?"
             city = p.city or "?"
             lines.append(f"{i}. {city} {beds} {price}")
-            lines.append(f"   {p.address[:60]}")
+            lines.append(f"   {p.address or '?'}")
             if p.listing_url:
-                lines.append(f"   {p.listing_url[:80]}")
+                lines.append(f"   {p.listing_url}")
             lines.append("")
 
         body = "\n".join(lines)
 
         try:
             from twilio.rest import Client
+        except ImportError:
+            logger.warning("twilio not installed — cannot send rental digest. Run: pip install twilio")
+            return
+
+        try:
             client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
-            # Split into chunks if too long
             for chunk_start in range(0, len(body), 1500):
                 chunk = body[chunk_start:chunk_start + 1500]
-                client.messages.create(
-                    body=chunk,
-                    from_=settings.TWILIO_FROM_NUMBER,
-                    to=settings.ALERT_TO_PHONE,
-                )
-            logger.info("Rental digest SMS sent (%d listings).", len(rentals))
+                # SMS
+                if settings.SMS_ENABLED:
+                    client.messages.create(
+                        body=chunk,
+                        from_=settings.TWILIO_FROM_NUMBER,
+                        to=settings.ALERT_TO_PHONE,
+                    )
+                # WhatsApp
+                if settings.WHATSAPP_ENABLED:
+                    client.messages.create(
+                        body=chunk,
+                        from_=settings.WHATSAPP_FROM_NUMBER,
+                        to=settings.WHATSAPP_TO_NUMBER,
+                    )
+            channels = []
+            if settings.SMS_ENABLED:
+                channels.append("SMS")
+            if settings.WHATSAPP_ENABLED:
+                channels.append("WhatsApp")
+            logger.info("Rental digest sent via %s (%d listings).", "+".join(channels), len(rentals))
         except Exception as exc:
-            logger.error("Rental digest SMS failed: %s", exc)
+            logger.error("Rental digest failed: %s", exc)
 
 
 def run_daily_report():
     """Morning report job."""
     from database.db import get_db, init_db
     from reports.generator import full_report
-    import json
 
     init_db()
     with get_db() as db:
         data = full_report(db)
 
-    top = data["top_opportunities"]
-    logger.info("=== DAILY REPORT ===")
-    logger.info("Top opportunities:")
-    for prop in top[:5]:
-        logger.info(
-            "  %s, %s — $%s — score %.0f",
-            prop.address, prop.city,
-            f"{prop.list_price:,.0f}" if prop.list_price else "?",
-            prop.total_score or 0,
-        )
+        top = data["top_opportunities"]
+        logger.info("=== DAILY REPORT ===")
+        logger.info("Top opportunities:")
+        for prop in top[:5]:
+            logger.info(
+                "  %s, %s — $%s — score %.0f",
+                prop.address, prop.city,
+                f"{prop.list_price:,.0f}" if prop.list_price else "?",
+                prop.total_score or 0,
+            )
 
 
 def run_crm_check():

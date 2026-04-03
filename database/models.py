@@ -120,7 +120,8 @@ class Property(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<Property {self.address}, {self.city} — ${self.list_price:,.0f} score={self.total_score}>"
+        price = f"${self.list_price:,.0f}" if self.list_price else "?"
+        return f"<Property {self.address}, {self.city} — {price} score={self.total_score}>"
 
 
 # ─── PriceHistory ─────────────────────────────────────────────────────────────

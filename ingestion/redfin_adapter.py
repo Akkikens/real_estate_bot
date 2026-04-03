@@ -219,8 +219,13 @@ class RedfinAdapter(SourceAdapter):
             "hoa_monthly":      row.get("HOA/MONTH") or row.get("HOA"),
             "status":           row.get("STATUS") or "active",
             "listing_remarks":  row.get("REMARKS") or row.get("Description"),
-            "listing_url":      row.get("URL (SEE https://www.redfin.com/buy-a-home/comparative-market-analysis for info on how Redfin values properties)")
-                                or row.get("URL"),
+            # Redfin's URL column has an absurdly long name that changes.
+            # Match any column starting with "URL" (case-sensitive, insertion order).
+            "listing_url":      next(
+                                    (v for k, v in row.items()
+                                     if k and (k == "URL" or k.startswith("URL ("))),
+                                    None,
+                                ),
             "external_id":      row.get("MLS#") or row.get("MLS Number"),
             "latitude":         row.get("LATITUDE") or row.get("Latitude"),
             "longitude":        row.get("LONGITUDE") or row.get("Longitude"),

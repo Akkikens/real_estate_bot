@@ -57,6 +57,17 @@ TWILIO_AUTH_TOKEN: str = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_FROM_NUMBER: str = os.getenv("TWILIO_FROM_NUMBER", "")
 ALERT_TO_PHONE: str = os.getenv("ALERT_TO_PHONE", "")
 
+# ─── WhatsApp (via Twilio) ────────────────────────────────────────────────────
+WHATSAPP_ENABLED: bool = _bool("WHATSAPP_ENABLED")
+WHATSAPP_FROM_NUMBER: str = os.getenv("WHATSAPP_FROM_NUMBER", "")  # whatsapp:+1...
+WHATSAPP_TO_NUMBER: str = os.getenv("WHATSAPP_TO_NUMBER", "")      # whatsapp:+1...
+
+# Auto-prefix whatsapp: if user forgot (Twilio requires it)
+if WHATSAPP_FROM_NUMBER and not WHATSAPP_FROM_NUMBER.startswith("whatsapp:"):
+    WHATSAPP_FROM_NUMBER = f"whatsapp:{WHATSAPP_FROM_NUMBER}"
+if WHATSAPP_TO_NUMBER and not WHATSAPP_TO_NUMBER.startswith("whatsapp:"):
+    WHATSAPP_TO_NUMBER = f"whatsapp:{WHATSAPP_TO_NUMBER}"
+
 # ─── Telegram ────────────────────────────────────────────────────────────────
 TELEGRAM_ENABLED: bool = _bool("TELEGRAM_ENABLED")
 TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")

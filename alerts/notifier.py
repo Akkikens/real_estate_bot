@@ -84,6 +84,30 @@ def _send_sms(body: str) -> bool:
         return False
 
 
+# ── WhatsApp (Twilio) ─────────────────────────────────────────────────────
+
+
+def _send_whatsapp(body: str) -> bool:
+    if not settings.WHATSAPP_ENABLED:
+        return False
+    try:
+        from twilio.rest import Client
+        client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+        client.messages.create(
+            body=body[:1600],
+            from_=settings.WHATSAPP_FROM_NUMBER,
+            to=settings.WHATSAPP_TO_NUMBER,
+        )
+        logger.info("WhatsApp alert sent.")
+        return True
+    except ImportError:
+        logger.warning("twilio not installed. Run: pip install twilio")
+        return False
+    except Exception as exc:
+        logger.error("WhatsApp alert failed: %s", exc)
+        return False
+
+
 # ── Telegram ──────────────────────────────────────────────────────────────────
 
 
@@ -219,6 +243,12 @@ def send_alert(
         ok = _send_sms(f"{subject}\n\n{body[:500]}")
         if ok:
             channels_used.append("sms")
+
+    # WhatsApp
+    if settings.WHATSAPP_ENABLED:
+        ok = _send_whatsapp(f"*{subject}*\n\n{body}")
+        if ok:
+            channels_used.append("whatsapp")
 
     # Telegram
     if settings.TELEGRAM_ENABLED:

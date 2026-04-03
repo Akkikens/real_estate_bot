@@ -459,11 +459,53 @@ def score_property(prop: Property) -> dict[str, Any]:
         "lot_expansion":        _score_lot_expansion(prop),
     }
 
+    # Track which dimensions have real data vs neutral defaults
+    _NO_DATA_DIMS: dict[str, bool] = {}
+
+    def _has_data(dim: str) -> bool:
+        if dim in _NO_DATA_DIMS:
+            return _NO_DATA_DIMS[dim]
+        if dim == "price_fit":
+            result = prop.list_price is not None
+        elif dim == "house_hack_potential":
+            result = (prop.beds or 0) > 0
+        elif dim == "rental_income":
+            result = prop.list_price is not None
+        elif dim == "adu_upside":
+            result = (prop.lot_size_sqft or 0) > 0 or bool(prop.has_adu_signal)
+        elif dim == "transit_access":
+            result = prop.bart_distance_miles is not None or prop.transit_score is not None
+        elif dim == "neighborhood":
+            result = prop.school_rating is not None or prop.crime_index is not None or prop.walk_score is not None
+        elif dim == "deal_opportunity":
+            result = (prop.days_on_market or 0) > 0 or (prop.original_price is not None and prop.list_price is not None)
+        elif dim == "lot_expansion":
+            result = (prop.lot_size_sqft or 0) > 0
+        else:
+            result = True
+        _NO_DATA_DIMS[dim] = result
+        return result
+
+    # For dimensions with no data, override score to 6.0/10 instead of 5.0
+    # so missing data doesn't drag the score (benefit of the doubt).
+    # Update the dimensions dict so breakdown and explanation stay consistent.
+    for dim, (score, note) in list(dimensions.items()):
+        if not _has_data(dim):
+            dimensions[dim] = (6.0, f"{note} [no data — using 6.0 default]")
+
     # Weighted sum → 0–100
     raw_score = sum(
         score * WEIGHTS.get(dim, 0.0) * 10
         for dim, (score, _) in dimensions.items()
     )
+
+    # Data completeness: penalize if we're flying blind on too many dimensions
+    n_with_data = sum(1 for dim in dimensions if _has_data(dim))
+    data_ratio = n_with_data / len(dimensions)
+    # If <50% of dimensions have data, scale down proportionally (floor at 0.7x)
+    if data_ratio < 0.5:
+        confidence = 0.7 + (data_ratio * 0.6)  # 0.7 at 0%, 1.0 at 50%
+        raw_score *= confidence
 
     # Complexity penalty
     penalty, penalty_note = _compute_complexity_penalty(prop)
