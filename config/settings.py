@@ -95,3 +95,23 @@ REQUEST_TIMEOUT_SECONDS: float = _float("REQUEST_TIMEOUT_SECONDS", 20.0)
 
 # ─── Outreach ─────────────────────────────────────────────────────────────────
 OUTREACH_MODE: str = os.getenv("OUTREACH_MODE", "draft")  # draft | approve | auto
+
+# ─── Scoring weights validation ──────────────────────────────────────────────
+# Validate that YAML weights sum to ~1.0 at import time to catch config errors.
+import logging as _logging
+from pathlib import Path as _Path
+try:
+    import yaml as _yaml
+    _weights_path = _Path(__file__).parent / "scoring_weights.yaml"
+    if _weights_path.exists():
+        with open(_weights_path) as _f:
+            _w = _yaml.safe_load(_f).get("weights", {})
+        _total = sum(v for v in _w.values() if isinstance(v, (int, float)))
+        if abs(_total - 1.0) > 0.02:
+            _logging.getLogger(__name__).warning(
+                "Scoring weights in scoring_weights.yaml sum to %.3f "
+                "(expected 1.0). Scores may drift — please check config.",
+                _total,
+            )
+except Exception:
+    pass  # Don't crash startup over a validation check

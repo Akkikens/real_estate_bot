@@ -114,7 +114,7 @@ def _run_pipeline(listing_type: str):
                 scorer(prop)
 
         n_alerts = check_and_alert(db, props)
-        db.commit()
+        # No explicit db.commit() — the get_db() context manager handles it.
 
     logger.info("[%s] Pipeline complete. New: %d | Alerts sent: %d", label, total_new, n_alerts)
 
@@ -152,7 +152,7 @@ def _send_rental_digest():
                 Property.is_archived == False,
                 Property.first_seen_at >= cutoff,
             )
-            .order_by(Property.total_score.desc().nullsfirst(), Property.list_price.asc())
+            .order_by(Property.total_score.desc().nullslast(), Property.list_price.asc())
             .limit(10)
             .all()
         )
@@ -217,16 +217,28 @@ def run_daily_report():
     with get_db() as db:
         data = full_report(db)
 
-        top = data["top_opportunities"]
-        logger.info("=== DAILY REPORT ===")
-        logger.info("Top opportunities:")
-        for prop in top[:5]:
-            logger.info(
-                "  %s, %s — $%s — score %.0f",
-                prop.address, prop.city,
-                f"{prop.list_price:,.0f}" if prop.list_price else "?",
-                prop.total_score or 0,
-            )
+        # Eagerly extract fields while the session is still open.
+        # full_report() returns live ORM objects; accessing attributes
+        # after the session closes would raise DetachedInstanceError.
+        top_summaries = [
+            {
+                "address": prop.address,
+                "city": prop.city,
+                "list_price": prop.list_price,
+                "total_score": prop.total_score or 0,
+            }
+            for prop in data["top_opportunities"][:5]
+        ]
+
+    logger.info("=== DAILY REPORT ===")
+    logger.info("Top opportunities:")
+    for s in top_summaries:
+        logger.info(
+            "  %s, %s — $%s — score %.0f",
+            s["address"], s["city"],
+            f"{s['list_price']:,.0f}" if s["list_price"] else "?",
+            s["total_score"],
+        )
 
 
 def run_crm_check():

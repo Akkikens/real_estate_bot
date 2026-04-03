@@ -42,3 +42,6 @@ launchd.err
 
 # Claude Code
 .claude/
+
+# Sandbox
+.sandbox-home/

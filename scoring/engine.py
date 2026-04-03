@@ -440,6 +440,25 @@ def _compute_complexity_penalty(prop: Property) -> tuple[float, str]:
     return round(penalty, 1), "Complexity penalty: " + " ".join(notes)
 
 
+# ── Data completeness check ────────────────────────────────────────────────────
+
+
+def _has_data(prop: Property, dim: str) -> bool:
+    """Check whether we have real data for a scoring dimension."""
+    _CHECKS: dict[str, Any] = {
+        "price_fit":            lambda p: p.list_price is not None,
+        "house_hack_potential": lambda p: (p.beds or 0) > 0,
+        "rental_income":        lambda p: p.list_price is not None,
+        "adu_upside":           lambda p: (p.lot_size_sqft or 0) > 0 or bool(p.has_adu_signal),
+        "transit_access":       lambda p: p.bart_distance_miles is not None or p.transit_score is not None,
+        "neighborhood":         lambda p: p.school_rating is not None or p.crime_index is not None or p.walk_score is not None,
+        "deal_opportunity":     lambda p: (p.days_on_market or 0) > 0 or (p.original_price is not None and p.list_price is not None),
+        "lot_expansion":        lambda p: (p.lot_size_sqft or 0) > 0,
+    }
+    check = _CHECKS.get(dim)
+    return check(prop) if check else True
+
+
 # ── Main scoring function ──────────────────────────────────────────────────────
 
 
@@ -459,38 +478,11 @@ def score_property(prop: Property) -> dict[str, Any]:
         "lot_expansion":        _score_lot_expansion(prop),
     }
 
-    # Track which dimensions have real data vs neutral defaults
-    _NO_DATA_DIMS: dict[str, bool] = {}
-
-    def _has_data(dim: str) -> bool:
-        if dim in _NO_DATA_DIMS:
-            return _NO_DATA_DIMS[dim]
-        if dim == "price_fit":
-            result = prop.list_price is not None
-        elif dim == "house_hack_potential":
-            result = (prop.beds or 0) > 0
-        elif dim == "rental_income":
-            result = prop.list_price is not None
-        elif dim == "adu_upside":
-            result = (prop.lot_size_sqft or 0) > 0 or bool(prop.has_adu_signal)
-        elif dim == "transit_access":
-            result = prop.bart_distance_miles is not None or prop.transit_score is not None
-        elif dim == "neighborhood":
-            result = prop.school_rating is not None or prop.crime_index is not None or prop.walk_score is not None
-        elif dim == "deal_opportunity":
-            result = (prop.days_on_market or 0) > 0 or (prop.original_price is not None and prop.list_price is not None)
-        elif dim == "lot_expansion":
-            result = (prop.lot_size_sqft or 0) > 0
-        else:
-            result = True
-        _NO_DATA_DIMS[dim] = result
-        return result
-
     # For dimensions with no data, override score to 6.0/10 instead of 5.0
     # so missing data doesn't drag the score (benefit of the doubt).
     # Update the dimensions dict so breakdown and explanation stay consistent.
     for dim, (score, note) in list(dimensions.items()):
-        if not _has_data(dim):
+        if not _has_data(prop, dim):
             dimensions[dim] = (6.0, f"{note} [no data — using 6.0 default]")
 
     # Weighted sum → 0–100
@@ -500,7 +492,7 @@ def score_property(prop: Property) -> dict[str, Any]:
     )
 
     # Data completeness: penalize if we're flying blind on too many dimensions
-    n_with_data = sum(1 for dim in dimensions if _has_data(dim))
+    n_with_data = sum(1 for dim in dimensions if _has_data(prop, dim))
     data_ratio = n_with_data / len(dimensions)
     # If <50% of dimensions have data, scale down proportionally (floor at 0.7x)
     if data_ratio < 0.5:

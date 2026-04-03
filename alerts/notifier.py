@@ -60,6 +60,20 @@ def _send_email(subject: str, body: str) -> bool:
         return False
 
 
+# ── Twilio client (lazy singleton — avoid re-creating per alert) ──────────────
+
+_twilio_client = None
+
+
+def _get_twilio_client():
+    """Return a shared Twilio Client instance, creating it on first call."""
+    global _twilio_client
+    if _twilio_client is None:
+        from twilio.rest import Client
+        _twilio_client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+    return _twilio_client
+
+
 # ── SMS (Twilio) ──────────────────────────────────────────────────────────────
 
 
@@ -67,8 +81,7 @@ def _send_sms(body: str) -> bool:
     if not settings.SMS_ENABLED:
         return False
     try:
-        from twilio.rest import Client
-        client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+        client = _get_twilio_client()
         client.messages.create(
             body=body[:1600],
             from_=settings.TWILIO_FROM_NUMBER,
@@ -91,8 +104,7 @@ def _send_whatsapp(body: str) -> bool:
     if not settings.WHATSAPP_ENABLED:
         return False
     try:
-        from twilio.rest import Client
-        client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+        client = _get_twilio_client()
         client.messages.create(
             body=body[:1600],
             from_=settings.WHATSAPP_FROM_NUMBER,

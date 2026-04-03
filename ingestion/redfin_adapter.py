@@ -160,7 +160,19 @@ class RedfinAdapter(SourceAdapter):
         if self._cookie:
             extra_headers["Cookie"] = self._cookie
 
-        resp = self._get(SEARCH_URL, params=params, extra_headers=extra_headers)
+        import httpx
+        try:
+            resp = self._get(SEARCH_URL, params=params, extra_headers=extra_headers)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in (401, 403):
+                logger.error(
+                    "Redfin returned HTTP %d for region %s — your browser cookies "
+                    "have likely expired. Please refresh REDFIN_COOKIE in .env. "
+                    "See the IMPORTANT note in RedfinAdapter docstring for instructions.",
+                    exc.response.status_code, region_id,
+                )
+                return []
+            raise
 
         # Detect empty/blocked response
         text = resp.text.strip()
