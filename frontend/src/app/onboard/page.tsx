@@ -217,7 +217,7 @@ export default function OnboardPage() {
 
   // If onboarding is already complete, redirect to dashboard
   useEffect(() => {
-    if (clerkUser?.publicMetadata?.onboarding_complete === true) {
+    if (clerkUser?.unsafeMetadata?.onboarding_complete === true) {
       router.replace("/dashboard");
     }
   }, [clerkUser, router]);
@@ -316,7 +316,7 @@ export default function OnboardPage() {
         updates.alert_score_threshold = data.alert_score_threshold;
       }
 
-      await api.put("/api/profile/preferences", updates);
+      await api.put("/api/auth/profile/preferences", updates);
     } catch (err) {
       console.error("Failed to save preferences:", err);
     } finally {
@@ -343,7 +343,7 @@ export default function OnboardPage() {
     // Final save of all preferences
     if (isSignedIn) {
       try {
-        await api.put("/api/profile/preferences", {
+        await api.put("/api/auth/profile/preferences", {
           max_price: data.max_price,
           down_payment_pct: data.down_payment_pct,
           target_cities: data.target_cities,
@@ -355,9 +355,14 @@ export default function OnboardPage() {
           alert_score_threshold: data.alert_score_threshold,
         });
 
-        // Mark onboarding complete via API (which sets Clerk metadata)
+        // Mark onboarding complete in Clerk metadata
         try {
-          await api.post("/api/profile/onboarding-complete");
+          await clerkUser?.update({
+            unsafeMetadata: {
+              ...clerkUser.unsafeMetadata,
+              onboarding_complete: true,
+            },
+          });
         } catch {
           // Non-critical — don't block launch
         }
