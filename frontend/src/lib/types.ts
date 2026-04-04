@@ -3,25 +3,8 @@
  * Keep in sync with api/main.py and api/routes/*.py
  */
 
-// ── Auth ─────────────────────────────────────────────────────────────────────
-
-export interface User {
-  id: string;
-  email: string;
-  name: string | null;
-  phone: string | null;
-  avatar_url: string | null;
-  market_id: string;
-  subscription_tier: "free" | "pro" | "investor";
-  created_at: string | null;
-}
-
-export interface TokenResponse {
-  access_token: string;
-  refresh_token: string;
-  token_type: string;
-  user: User;
-}
+// ── Auth / Profile ───────────────────────────────────────────────────────────
+// User identity is managed by Clerk. These types represent our backend models.
 
 export interface UserPreferences {
   max_price: number | null;
@@ -39,7 +22,6 @@ export interface UserPreferences {
 }
 
 export interface UserProfile {
-  user: User;
   preferences: UserPreferences | null;
 }
 

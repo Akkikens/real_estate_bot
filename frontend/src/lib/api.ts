@@ -1,40 +1,18 @@
 /**
  * API client for the HouseMatch FastAPI backend.
  *
- * Handles:
- * - Base URL configuration
- * - Auth token injection via Authorization header
- * - Automatic token refresh on 401
- * - Typed fetch wrapper
+ * Auth tokens are injected via Clerk's getToken() — see useApiAuth hook.
+ * No localStorage token management; Clerk handles sessions via httpOnly cookies.
  */
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-// ── Token storage (client-side only) ─────────────────────────────────────────
+// ── Clerk token getter (set by useApiAuth hook) ──────────────────────────────
 
-const TOKEN_KEY = "hm_access_token";
-const REFRESH_KEY = "hm_refresh_token";
+let _getToken: (() => Promise<string | null>) | null = null;
 
-export function getAccessToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(TOKEN_KEY);
-}
-
-export function getRefreshToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(REFRESH_KEY);
-}
-
-export function setTokens(access: string, refresh: string) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(TOKEN_KEY, access);
-  localStorage.setItem(REFRESH_KEY, refresh);
-}
-
-export function clearTokens() {
-  if (typeof window === "undefined") return;
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(REFRESH_KEY);
+export function setTokenGetter(getter: () => Promise<string | null>) {
+  _getToken = getter;
 }
 
 // ── API error class ──────────────────────────────────────────────────────────
@@ -60,31 +38,6 @@ type FetchOptions = {
   auth?: boolean; // default true — set false for public endpoints
 };
 
-async function refreshAccessToken(): Promise<string | null> {
-  const refresh = getRefreshToken();
-  if (!refresh) return null;
-
-  try {
-    const res = await fetch(`${API_BASE}/api/auth/refresh`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: refresh }),
-    });
-
-    if (!res.ok) {
-      clearTokens();
-      return null;
-    }
-
-    const data = await res.json();
-    setTokens(data.access_token, data.refresh_token);
-    return data.access_token;
-  } catch {
-    clearTokens();
-    return null;
-  }
-}
-
 export async function apiFetch<T>(
   path: string,
   options: FetchOptions = {}
@@ -96,33 +49,26 @@ export async function apiFetch<T>(
     ...headers,
   };
 
-  if (auth) {
-    const token = getAccessToken();
-    if (token) {
-      reqHeaders["Authorization"] = `Bearer ${token}`;
+  // Inject Clerk session token for authenticated requests
+  if (auth && _getToken) {
+    try {
+      const token = await _getToken();
+      if (token) {
+        reqHeaders["Authorization"] = `Bearer ${token}`;
+      }
+    } catch {
+      // Token fetch failed — proceed without auth header
+      // Clerk will handle session refresh automatically
     }
   }
 
   const url = path.startsWith("http") ? path : `${API_BASE}${path}`;
 
-  let res = await fetch(url, {
+  const res = await fetch(url, {
     method,
     headers: reqHeaders,
     body: body ? JSON.stringify(body) : undefined,
   });
-
-  // Auto-refresh on 401
-  if (res.status === 401 && auth) {
-    const newToken = await refreshAccessToken();
-    if (newToken) {
-      reqHeaders["Authorization"] = `Bearer ${newToken}`;
-      res = await fetch(url, {
-        method,
-        headers: reqHeaders,
-        body: body ? JSON.stringify(body) : undefined,
-      });
-    }
-  }
 
   if (!res.ok) {
     let detail = `Request failed with status ${res.status}`;
