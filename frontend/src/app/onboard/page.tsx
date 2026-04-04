@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
+import confetti from "canvas-confetti";
 import {
   ArrowRight,
   ArrowLeft,
@@ -10,6 +11,7 @@ import {
   Target,
   ListChecks,
   Bell,
+  Rocket,
   Check,
   Home,
   Repeat,
@@ -24,6 +26,11 @@ import {
   Bed,
   Zap,
   Loader2,
+  MapPin,
+  Droplets,
+  AlertTriangle,
+  Clock,
+  Volume2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -31,15 +38,21 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Navbar } from "@/components/navbar";
-import Link from "next/link";
-import { useAuthStore } from "@/lib/stores";
-import { useMarket } from "@/lib/queries";
+import { ScoreRing } from "@/components/score-ring";
+import { useAuth, useUser, SignInButton } from "@clerk/nextjs";
+import { useMarket, useProperties } from "@/lib/queries";
+import { api } from "@/lib/api";
+
+// ── Constants ────────────────────────────────────────────────────────────────
+
+const STORAGE_KEY = "hm_onboard_progress";
 
 const steps = [
   { label: "Budget", icon: DollarSign },
   { label: "Strategy", icon: Target },
   { label: "Must-Haves", icon: ListChecks },
   { label: "Alerts", icon: Bell },
+  { label: "Launch", icon: Rocket },
 ];
 
 const strategies = [
@@ -48,6 +61,7 @@ const strategies = [
     label: "House-Hack",
     icon: Home,
     desc: "Live in one unit, rent the others. Offset your mortgage.",
+    example: "Buy a 4BR in Oakland for $650k → rent 3 rooms at $1,400/ea → cover 85% of your mortgage from day one.",
     popular: true,
   },
   {
@@ -55,18 +69,21 @@ const strategies = [
     label: "Buy & Hold",
     icon: Repeat,
     desc: "Long-term rental income and appreciation play.",
+    example: "Buy a duplex in Richmond for $550k → rent both units → $400/mo positive cash flow after PITI.",
   },
   {
     id: "primary",
     label: "Primary Residence",
     icon: Building,
     desc: "Finding the perfect home to live in.",
+    example: "Find a 3BR in Fremont near BART for $850k → score 80+ on transit, schools, and neighborhood safety.",
   },
   {
     id: "fix_flip",
     label: "Fix & Flip",
     icon: Wrench,
     desc: "Buy undervalued, renovate, sell for profit.",
+    example: "Buy a fixer in El Cerrito for $500k → $80k renovation → sell for $700k → $120k profit before tax.",
   },
 ];
 
@@ -82,102 +99,300 @@ const mustHaves = [
   { id: "low-crime", label: "Low Crime", icon: ShieldCheck },
 ];
 
+const dealBreakerOptions = [
+  { id: "hoa_500", label: "HOA > $500/mo", icon: DollarSign },
+  { id: "flood_zone", label: "Flood zone", icon: Droplets },
+  { id: "age_50", label: "Age > 50 years", icon: Clock },
+  { id: "busy_street", label: "Busy street / highway", icon: Volume2 },
+  { id: "full_reno", label: "Full renovation needed", icon: AlertTriangle },
+];
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+interface OnboardData {
+  max_price: number;
+  down_payment_pct: number;
+  target_cities: string[];
+  strategy: string | null;
+  must_haves: string[];
+  deal_breakers: string[];
+  alert_channels: { sms: boolean; whatsapp: boolean; email: boolean };
+  alert_time: string;
+  alert_score_threshold: number;
+}
+
+interface OnboardProgress {
+  step: number;
+  data: OnboardData;
+  updated_at: string;
+}
+
+const DEFAULT_DATA: OnboardData = {
+  max_price: 850000,
+  down_payment_pct: 20,
+  target_cities: [],
+  strategy: null,
+  must_haves: [],
+  deal_breakers: [],
+  alert_channels: { sms: true, whatsapp: false, email: true },
+  alert_time: "08:00",
+  alert_score_threshold: 65,
+};
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
 function formatPrice(val: number) {
   if (val >= 1000000) return `$${(val / 1000000).toFixed(1)}M`;
   return `$${(val / 1000).toFixed(0)}k`;
 }
 
+function loadProgress(): OnboardProgress | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as OnboardProgress;
+    // Expire after 30 days
+    const age = Date.now() - new Date(parsed.updated_at).getTime();
+    if (age > 30 * 24 * 60 * 60 * 1000) {
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveProgress(step: number, data: OnboardData) {
+  if (typeof window === "undefined") return;
+  const progress: OnboardProgress = {
+    step,
+    data,
+    updated_at: new Date().toISOString(),
+  };
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
+}
+
+function clearProgress() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(STORAGE_KEY);
+}
+
+function getScoreThresholdColor(value: number) {
+  if (value >= 80) return "text-green-600 dark:text-green-400";
+  if (value >= 65) return "text-amber-dark dark:text-amber";
+  if (value >= 50) return "text-yellow-600 dark:text-yellow-400";
+  return "text-red-500";
+}
+
+// ── Monthly Payment Estimate ─────────────────────────────────────────────────
+
+function estimateMonthly(price: number, downPct: number) {
+  const rate = 0.0725 / 12; // 7.25% annual
+  const loan = price * (1 - downPct / 100);
+  const n = 360; // 30 years
+  const pi = loan * (rate * Math.pow(1 + rate, n)) / (Math.pow(1 + rate, n) - 1);
+  return Math.round(pi);
+}
+
+// ── Component ────────────────────────────────────────────────────────────────
+
 export default function OnboardPage() {
   const router = useRouter();
-  const { user, preferences, updatePreferences, isAuthenticated } = useAuthStore();
+  const { isSignedIn } = useAuth();
+  const { user: clerkUser } = useUser();
 
+  // Initialize from localStorage
+  const [initialized, setInitialized] = useState(false);
   const [step, setStep] = useState(0);
-  const [budget, setBudget] = useState([preferences?.max_price || 850000]);
-  const [downPayment, setDownPayment] = useState(
-    String(preferences?.down_payment_pct || 20)
-  );
-  const [selectedCities, setSelectedCities] = useState<string[]>(
-    preferences?.target_cities || []
-  );
-  const [strategy, setStrategy] = useState<string | null>(
-    preferences?.strategy || null
-  );
-  const [selected, setSelected] = useState<string[]>(
-    preferences?.must_haves || []
-  );
-  const [channels, setChannels] = useState(
-    preferences?.alert_channels || { sms: true, whatsapp: false, email: true }
-  );
-  const [alertTime, setAlertTime] = useState(preferences?.alert_time || "08:00");
+  const [data, setData] = useState<OnboardData>(DEFAULT_DATA);
   const [saving, setSaving] = useState(false);
+  const [launching, setLaunching] = useState(false);
 
   // Load market cities
-  const marketId = user?.market_id || "bay_area";
+  const marketId = (clerkUser?.publicMetadata?.market_id as string) || "bay_area";
   const { data: market } = useMarket(marketId);
   const cities = market?.cities || [];
 
-  const toggleCity = (city: string) =>
-    setSelectedCities((prev) =>
-      prev.includes(city) ? prev.filter((c) => c !== city) : [...prev, city]
-    );
+  // If onboarding is already complete, redirect to dashboard
+  useEffect(() => {
+    if (clerkUser?.publicMetadata?.onboarding_complete === true) {
+      router.replace("/dashboard");
+    }
+  }, [clerkUser, router]);
 
-  const toggleMustHave = (id: string) =>
-    setSelected((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
+  // Restore from localStorage on mount
+  useEffect(() => {
+    const saved = loadProgress();
+    if (saved) {
+      setStep(saved.step);
+      setData({ ...DEFAULT_DATA, ...saved.data });
+    }
+    setInitialized(true);
+  }, []);
+
+  // Save to localStorage on any data/step change
+  useEffect(() => {
+    if (initialized) {
+      saveProgress(step, data);
+    }
+  }, [step, data, initialized]);
+
+  // Fetch preview properties for Step 5
+  const previewFilters = useMemo(() => ({
+    page: 1,
+    page_size: 3,
+    sort: "score" as const,
+    max_price: data.max_price,
+    ...(data.target_cities.length === 1 ? { city: data.target_cities[0] } : {}),
+  }), [data.max_price, data.target_cities]);
+
+  const { data: previewProps } = useProperties(previewFilters);
+
+  // ── Data updaters ──────────────────────────────────────────────────────────
+
+  const updateData = useCallback((updates: Partial<OnboardData>) => {
+    setData((prev) => ({ ...prev, ...updates }));
+  }, []);
+
+  const toggleCity = useCallback((city: string) => {
+    setData((prev) => ({
+      ...prev,
+      target_cities: prev.target_cities.includes(city)
+        ? prev.target_cities.filter((c) => c !== city)
+        : [...prev.target_cities, city],
+    }));
+  }, []);
+
+  const toggleMustHave = useCallback((id: string) => {
+    setData((prev) => ({
+      ...prev,
+      must_haves: prev.must_haves.includes(id)
+        ? prev.must_haves.filter((x) => x !== id)
+        : [...prev.must_haves, id],
+    }));
+  }, []);
+
+  const toggleDealBreaker = useCallback((id: string) => {
+    setData((prev) => ({
+      ...prev,
+      deal_breakers: prev.deal_breakers.includes(id)
+        ? prev.deal_breakers.filter((x) => x !== id)
+        : [...prev.deal_breakers, id],
+    }));
+  }, []);
+
+  // ── Validation ─────────────────────────────────────────────────────────────
 
   const canNext =
     step === 0
-      ? selectedCities.length > 0
+      ? data.target_cities.length > 0
       : step === 1
-      ? strategy !== null
-      : step === 2
-      ? true
+      ? data.strategy !== null
       : true;
 
-  // Save preferences at each step transition
+  // ── Save to backend ────────────────────────────────────────────────────────
+
   const saveCurrentStep = useCallback(async () => {
-    if (!isAuthenticated) return;
+    if (!isSignedIn) return;
 
     try {
       setSaving(true);
       const updates: Record<string, unknown> = {};
 
       if (step === 0) {
-        updates.max_price = budget[0];
-        updates.down_payment_pct = parseFloat(downPayment);
-        updates.target_cities = selectedCities;
+        updates.max_price = data.max_price;
+        updates.down_payment_pct = data.down_payment_pct;
+        updates.target_cities = data.target_cities;
       } else if (step === 1) {
-        updates.strategy = strategy;
+        updates.strategy = data.strategy;
       } else if (step === 2) {
-        updates.must_haves = selected;
+        updates.must_haves = data.must_haves;
+        updates.deal_breakers = data.deal_breakers;
       } else if (step === 3) {
-        updates.alert_channels = channels;
-        updates.alert_time = alertTime;
+        updates.alert_channels = data.alert_channels;
+        updates.alert_time = data.alert_time;
+        updates.alert_score_threshold = data.alert_score_threshold;
       }
 
-      await updatePreferences(updates);
+      await api.put("/api/profile/preferences", updates);
     } catch (err) {
       console.error("Failed to save preferences:", err);
     } finally {
       setSaving(false);
     }
-  }, [
-    isAuthenticated, step, budget, downPayment, selectedCities,
-    strategy, selected, channels, alertTime, updatePreferences,
-  ]);
+  }, [isSignedIn, step, data]);
+
+  // ── Navigation ─────────────────────────────────────────────────────────────
 
   const handleNext = async () => {
     await saveCurrentStep();
-    if (step < 3) {
+    if (step < steps.length - 1) {
       setStep(step + 1);
     }
   };
 
+  const handleBack = () => {
+    if (step > 0) setStep(step - 1);
+  };
+
   const handleLaunch = async () => {
-    await saveCurrentStep();
+    setLaunching(true);
+
+    // Final save of all preferences
+    if (isSignedIn) {
+      try {
+        await api.put("/api/profile/preferences", {
+          max_price: data.max_price,
+          down_payment_pct: data.down_payment_pct,
+          target_cities: data.target_cities,
+          strategy: data.strategy,
+          must_haves: data.must_haves,
+          deal_breakers: data.deal_breakers,
+          alert_channels: data.alert_channels,
+          alert_time: data.alert_time,
+          alert_score_threshold: data.alert_score_threshold,
+        });
+
+        // Mark onboarding complete via API (which sets Clerk metadata)
+        try {
+          await api.post("/api/profile/onboarding-complete");
+        } catch {
+          // Non-critical — don't block launch
+        }
+      } catch (err) {
+        console.error("Failed final save:", err);
+      }
+    }
+
+    // Fire confetti!
+    confetti({
+      particleCount: 150,
+      spread: 80,
+      origin: { y: 0.6 },
+      colors: ["#d4a843", "#f5d78e", "#b8941f", "#fef3c7"],
+    });
+
+    clearProgress();
+
+    // Navigate after a short celebration
+    setTimeout(() => {
+      router.push("/dashboard");
+    }, 1500);
+  };
+
+  const handleSkip = () => {
+    clearProgress();
     router.push("/dashboard");
   };
+
+  // Strategy label for summary
+  const strategyLabel = strategies.find((s) => s.id === data.strategy)?.label || "Not set";
+  const selectedStrategy = strategies.find((s) => s.id === data.strategy);
+  const monthlyEstimate = estimateMonthly(data.max_price, data.down_payment_pct);
+
+  if (!initialized) return null;
 
   return (
     <div className="min-h-screen">
@@ -187,17 +402,19 @@ export default function OnboardPage() {
         <div className="flex items-center justify-between mb-10">
           {steps.map((s, i) => (
             <div key={s.label} className="flex items-center gap-2 flex-1">
-              <div
+              <button
+                onClick={() => i < step && setStep(i)}
+                disabled={i >= step}
                 className={`flex h-9 w-9 items-center justify-center rounded-full text-sm font-semibold transition-colors ${
                   i < step
-                    ? "bg-amber text-amber-foreground"
+                    ? "bg-amber text-amber-foreground cursor-pointer hover:bg-amber-dark"
                     : i === step
                     ? "bg-amber/20 text-amber-dark dark:text-amber border-2 border-amber"
                     : "bg-muted text-muted-foreground"
                 }`}
               >
                 {i < step ? <Check className="h-4 w-4" /> : i + 1}
-              </div>
+              </button>
               <span
                 className={`text-sm font-medium hidden sm:inline ${
                   i <= step ? "text-foreground" : "text-muted-foreground"
@@ -217,11 +434,13 @@ export default function OnboardPage() {
         </div>
 
         {/* Unauthenticated banner */}
-        {!isAuthenticated && (
+        {!isSignedIn && (
           <div className="rounded-lg border border-amber/30 bg-amber/5 px-4 py-2.5 mb-6 text-sm text-muted-foreground">
-            <Link href="/login" className="text-amber-dark dark:text-amber font-medium hover:underline">
-              Sign in
-            </Link>{" "}
+            <SignInButton mode="modal">
+              <button className="text-amber-dark dark:text-amber font-medium hover:underline">
+                Sign in
+              </button>
+            </SignInButton>{" "}
             to save your preferences
           </div>
         )}
@@ -235,15 +454,15 @@ export default function OnboardPage() {
             exit={{ opacity: 0, x: -20 }}
             transition={{ duration: 0.25 }}
           >
+            {/* ── Step 0: Market & Budget ────────────────────────────────── */}
             {step === 0 && (
               <div className="space-y-8">
                 <div>
                   <h2 className="font-[family-name:var(--font-heading)] text-2xl sm:text-3xl font-bold">
-                    What&apos;s your budget?
+                    Where are you looking?
                   </h2>
                   <p className="mt-2 text-muted-foreground">
-                    Set your max price and down payment. We&apos;ll only show
-                    properties that fit.
+                    Set your market, budget, and target cities.
                   </p>
                 </div>
 
@@ -251,34 +470,42 @@ export default function OnboardPage() {
                   <div className="flex items-center justify-between">
                     <Label className="text-sm font-medium">Max Price</Label>
                     <span className="text-2xl font-bold text-amber-dark dark:text-amber">
-                      {formatPrice(budget[0])}
+                      {formatPrice(data.max_price)}
                     </span>
                   </div>
                   <Slider
-                    value={budget}
+                    value={[data.max_price]}
                     onValueChange={(v) =>
-                      setBudget(Array.isArray(v) ? v : [v])
+                      updateData({ max_price: Array.isArray(v) ? v[0] : v })
                     }
-                    min={200000}
-                    max={2000000}
+                    min={100000}
+                    max={3000000}
                     step={25000}
                     className="[&_[role=slider]]:bg-amber [&_[role=slider]]:border-amber"
                   />
                   <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>$200k</span>
-                    <span>$2M</span>
+                    <span>$100k</span>
+                    <span>$3M</span>
                   </div>
+                  <p className="text-xs text-muted-foreground">
+                    ~${monthlyEstimate.toLocaleString()}/mo at 7.25% ({data.down_payment_pct}% down)
+                    {data.down_payment_pct < 20 && (
+                      <span className="text-amber-dark dark:text-amber ml-1">
+                        · PMI adds ~$200/mo
+                      </span>
+                    )}
+                  </p>
                 </div>
 
                 <div className="space-y-2">
                   <Label className="text-sm font-medium">Down Payment %</Label>
                   <div className="flex gap-2">
-                    {["3.5", "5", "10", "15", "20", "25"].map((pct) => (
+                    {[3.5, 5, 10, 15, 20, 25].map((pct) => (
                       <button
                         key={pct}
-                        onClick={() => setDownPayment(pct)}
+                        onClick={() => updateData({ down_payment_pct: pct })}
                         className={`flex-1 rounded-lg border py-2 text-sm font-medium transition-colors ${
-                          downPayment === pct
+                          data.down_payment_pct === pct
                             ? "border-amber bg-amber/10 text-amber-dark dark:text-amber"
                             : "border-border hover:bg-muted"
                         }`}
@@ -290,21 +517,39 @@ export default function OnboardPage() {
                 </div>
 
                 <div className="space-y-3">
-                  <Label className="text-sm font-medium">
-                    Target Cities
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-medium">
+                      Target Cities
+                      {cities.length > 0 && (
+                        <span className="text-muted-foreground font-normal ml-2">
+                          ({data.target_cities.length} selected)
+                        </span>
+                      )}
+                    </Label>
                     {cities.length > 0 && (
-                      <span className="text-muted-foreground font-normal ml-2">
-                        ({selectedCities.length} selected)
-                      </span>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => updateData({ target_cities: [...cities] })}
+                          className="text-xs text-amber-dark dark:text-amber hover:underline"
+                        >
+                          Select All
+                        </button>
+                        <button
+                          onClick={() => updateData({ target_cities: [] })}
+                          className="text-xs text-muted-foreground hover:underline"
+                        >
+                          Clear
+                        </button>
+                      </div>
                     )}
-                  </Label>
+                  </div>
                   <div className="flex flex-wrap gap-2">
                     {cities.map((city) => (
                       <button
                         key={city}
                         onClick={() => toggleCity(city)}
                         className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
-                          selectedCities.includes(city)
+                          data.target_cities.includes(city)
                             ? "border-amber bg-amber/10 text-amber-dark dark:text-amber"
                             : "border-border text-muted-foreground hover:bg-muted hover:text-foreground"
                         }`}
@@ -322,6 +567,7 @@ export default function OnboardPage() {
               </div>
             )}
 
+            {/* ── Step 1: Strategy ───────────────────────────────────────── */}
             {step === 1 && (
               <div className="space-y-8">
                 <div>
@@ -337,16 +583,16 @@ export default function OnboardPage() {
                   {strategies.map((s) => (
                     <button
                       key={s.id}
-                      onClick={() => setStrategy(s.id)}
+                      onClick={() => updateData({ strategy: s.id })}
                       className={`flex items-start gap-4 rounded-xl border p-5 text-left transition-all ${
-                        strategy === s.id
+                        data.strategy === s.id
                           ? "border-amber bg-amber/5 ring-1 ring-amber/30"
                           : "border-border hover:border-amber/20 hover:bg-muted/50"
                       }`}
                     >
                       <div
                         className={`flex h-10 w-10 items-center justify-center rounded-lg shrink-0 ${
-                          strategy === s.id
+                          data.strategy === s.id
                             ? "bg-amber text-amber-foreground"
                             : "bg-muted text-muted-foreground"
                         }`}
@@ -366,7 +612,7 @@ export default function OnboardPage() {
                           {s.desc}
                         </p>
                       </div>
-                      {strategy === s.id && (
+                      {data.strategy === s.id && (
                         <div className="ml-auto mt-1">
                           <Check className="h-5 w-5 text-amber" />
                         </div>
@@ -374,48 +620,113 @@ export default function OnboardPage() {
                     </button>
                   ))}
                 </div>
+
+                {/* Strategy example callout */}
+                {selectedStrategy && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="rounded-lg border border-amber/20 bg-amber/5 p-4"
+                  >
+                    <p className="text-sm text-muted-foreground">
+                      <span className="font-medium text-foreground">Example: </span>
+                      {selectedStrategy.example}
+                    </p>
+                  </motion.div>
+                )}
               </div>
             )}
 
+            {/* ── Step 2: Must-Haves + Deal Breakers ────────────────────── */}
             {step === 2 && (
               <div className="space-y-8">
                 <div>
                   <h2 className="font-[family-name:var(--font-heading)] text-2xl sm:text-3xl font-bold">
-                    Must-haves
+                    What matters most?
                   </h2>
                   <p className="mt-2 text-muted-foreground">
-                    Select what matters most. We&apos;ll boost scores for
-                    properties that match.
+                    Select features you care about. We&apos;ll boost scores for matches.
                   </p>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {mustHaves.map((item) => (
-                    <button
-                      key={item.id}
-                      onClick={() => toggleMustHave(item.id)}
-                      className={`flex flex-col items-center gap-2 rounded-xl border p-4 transition-all ${
-                        selected.includes(item.id)
-                          ? "border-amber bg-amber/5 ring-1 ring-amber/30"
-                          : "border-border hover:border-amber/20 hover:bg-muted/50"
-                      }`}
-                    >
-                      <item.icon
-                        className={`h-6 w-6 ${
-                          selected.includes(item.id)
-                            ? "text-amber-dark dark:text-amber"
-                            : "text-muted-foreground"
-                        }`}
-                      />
-                      <span className="text-sm font-medium text-center">
-                        {item.label}
+                {/* Must-haves */}
+                <div className="space-y-3">
+                  <Label className="text-sm font-medium">
+                    Must-Haves
+                    {data.must_haves.length > 0 && (
+                      <span className="text-muted-foreground font-normal ml-2">
+                        ({data.must_haves.length} selected)
                       </span>
-                    </button>
-                  ))}
+                    )}
+                  </Label>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {mustHaves.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => toggleMustHave(item.id)}
+                        className={`flex flex-col items-center gap-2 rounded-xl border p-4 transition-all ${
+                          data.must_haves.includes(item.id)
+                            ? "border-amber bg-amber/5 ring-1 ring-amber/30"
+                            : "border-border hover:border-amber/20 hover:bg-muted/50"
+                        }`}
+                      >
+                        <item.icon
+                          className={`h-6 w-6 ${
+                            data.must_haves.includes(item.id)
+                              ? "text-amber-dark dark:text-amber"
+                              : "text-muted-foreground"
+                          }`}
+                        />
+                        <span className="text-sm font-medium text-center">
+                          {item.label}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Deal-breakers */}
+                <div className="space-y-3">
+                  <Label className="text-sm font-medium">
+                    Deal-Breakers
+                    {data.deal_breakers.length > 0 && (
+                      <span className="text-muted-foreground font-normal ml-2">
+                        ({data.deal_breakers.length} selected)
+                      </span>
+                    )}
+                  </Label>
+                  <p className="text-xs text-muted-foreground -mt-1">
+                    Properties with these traits will be filtered out or scored lower.
+                  </p>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {dealBreakerOptions.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => toggleDealBreaker(item.id)}
+                        className={`flex flex-col items-center gap-2 rounded-xl border p-4 transition-all ${
+                          data.deal_breakers.includes(item.id)
+                            ? "border-red-400 bg-red-50 dark:bg-red-950/30 ring-1 ring-red-300"
+                            : "border-border hover:border-red-200 hover:bg-muted/50"
+                        }`}
+                      >
+                        <item.icon
+                          className={`h-5 w-5 ${
+                            data.deal_breakers.includes(item.id)
+                              ? "text-red-500"
+                              : "text-muted-foreground"
+                          }`}
+                        />
+                        <span className="text-sm font-medium text-center">
+                          {item.label}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
             )}
 
+            {/* ── Step 3: Alerts ─────────────────────────────────────────── */}
             {step === 3 && (
               <div className="space-y-8">
                 <div>
@@ -428,71 +739,204 @@ export default function OnboardPage() {
                 </div>
 
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between rounded-xl border border-border p-4">
-                    <div className="flex items-center gap-3">
-                      <span className="text-lg">💬</span>
-                      <div>
-                        <p className="font-medium text-sm">SMS</p>
-                        <p className="text-xs text-muted-foreground">
-                          Text message alerts
-                        </p>
+                  {[
+                    { key: "sms" as const, emoji: "💬", label: "SMS", desc: "Text message alerts" },
+                    { key: "whatsapp" as const, emoji: "📱", label: "WhatsApp", desc: "Rich property cards with score breakdowns" },
+                    { key: "email" as const, emoji: "📧", label: "Email", desc: "Daily digest with full details" },
+                  ].map((ch) => (
+                    <div key={ch.key} className="flex items-center justify-between rounded-xl border border-border p-4">
+                      <div className="flex items-center gap-3">
+                        <span className="text-lg">{ch.emoji}</span>
+                        <div>
+                          <p className="font-medium text-sm">{ch.label}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {ch.desc}
+                          </p>
+                        </div>
                       </div>
+                      <Switch
+                        checked={data.alert_channels[ch.key]}
+                        onCheckedChange={(v) =>
+                          updateData({
+                            alert_channels: { ...data.alert_channels, [ch.key]: v },
+                          })
+                        }
+                      />
                     </div>
-                    <Switch
-                      checked={channels.sms}
-                      onCheckedChange={(v) =>
-                        setChannels((c) => ({ ...c, sms: v }))
-                      }
-                    />
-                  </div>
-                  <div className="flex items-center justify-between rounded-xl border border-border p-4">
-                    <div className="flex items-center gap-3">
-                      <span className="text-lg">📱</span>
-                      <div>
-                        <p className="font-medium text-sm">WhatsApp</p>
-                        <p className="text-xs text-muted-foreground">
-                          Rich message with property cards
-                        </p>
-                      </div>
-                    </div>
-                    <Switch
-                      checked={channels.whatsapp}
-                      onCheckedChange={(v) =>
-                        setChannels((c) => ({ ...c, whatsapp: v }))
-                      }
-                    />
-                  </div>
-                  <div className="flex items-center justify-between rounded-xl border border-border p-4">
-                    <div className="flex items-center gap-3">
-                      <span className="text-lg">📧</span>
-                      <div>
-                        <p className="font-medium text-sm">Email</p>
-                        <p className="text-xs text-muted-foreground">
-                          Daily digest with full details
-                        </p>
-                      </div>
-                    </div>
-                    <Switch
-                      checked={channels.email}
-                      onCheckedChange={(v) =>
-                        setChannels((c) => ({ ...c, email: v }))
-                      }
-                    />
-                  </div>
+                  ))}
                 </div>
 
                 <div className="space-y-2">
                   <Label className="text-sm font-medium">Delivery Time</Label>
                   <Input
                     type="time"
-                    value={alertTime}
-                    onChange={(e) => setAlertTime(e.target.value)}
+                    value={data.alert_time}
+                    onChange={(e) => updateData({ alert_time: e.target.value })}
                     className="max-w-[200px]"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Your daily top picks arrive at this time.
+                    Your daily top picks arrive at this time. Pacific Time.
                   </p>
                 </div>
+
+                {/* Score Threshold */}
+                <div className="space-y-3">
+                  <Label className="text-sm font-medium">
+                    Minimum Score for Alerts:{" "}
+                    <span className={`font-bold ${getScoreThresholdColor(data.alert_score_threshold)}`}>
+                      {data.alert_score_threshold}
+                    </span>
+                  </Label>
+                  <Slider
+                    value={[data.alert_score_threshold]}
+                    onValueChange={(v) =>
+                      updateData({ alert_score_threshold: Array.isArray(v) ? v[0] : v })
+                    }
+                    min={0}
+                    max={100}
+                    step={5}
+                    className="[&_[role=slider]]:bg-amber [&_[role=slider]]:border-amber"
+                  />
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>0 (all)</span>
+                    <span>50</span>
+                    <span>100</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Only properties scoring above this threshold will trigger alerts.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* ── Step 4: Preview & Launch ───────────────────────────────── */}
+            {step === 4 && (
+              <div className="space-y-8">
+                <div>
+                  <h2 className="font-[family-name:var(--font-heading)] text-2xl sm:text-3xl font-bold">
+                    Your scout is ready
+                  </h2>
+                  <p className="mt-2 text-muted-foreground">
+                    Here&apos;s a preview of what we found for you.
+                  </p>
+                </div>
+
+                {/* Summary card */}
+                <div className="rounded-xl border border-border/60 bg-card p-6 space-y-3">
+                  <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wider">
+                    Your Profile
+                  </h3>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Market</span>
+                      <span className="font-medium">{market?.display_name || "Bay Area"}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Budget</span>
+                      <span className="font-medium">
+                        Up to {formatPrice(data.max_price)} ({data.down_payment_pct}% down)
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Strategy</span>
+                      <span className="font-medium">{strategyLabel}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Cities</span>
+                      <span className="font-medium text-right max-w-[200px] truncate">
+                        {data.target_cities.length > 0
+                          ? data.target_cities.join(", ")
+                          : "All cities"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Must-haves</span>
+                      <span className="font-medium">
+                        {data.must_haves.length > 0
+                          ? `${data.must_haves.length} selected`
+                          : "None"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Alerts</span>
+                      <span className="font-medium">
+                        {[
+                          data.alert_channels.sms && "SMS",
+                          data.alert_channels.whatsapp && "WhatsApp",
+                          data.alert_channels.email && "Email",
+                        ]
+                          .filter(Boolean)
+                          .join(" + ") || "None"}{" "}
+                        at {data.alert_time}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      onClick={() => setStep(0)}
+                      className="text-xs text-amber-dark dark:text-amber hover:underline"
+                    >
+                      Edit Budget
+                    </button>
+                    <span className="text-xs text-muted-foreground">·</span>
+                    <button
+                      onClick={() => setStep(1)}
+                      className="text-xs text-amber-dark dark:text-amber hover:underline"
+                    >
+                      Edit Strategy
+                    </button>
+                    <span className="text-xs text-muted-foreground">·</span>
+                    <button
+                      onClick={() => setStep(3)}
+                      className="text-xs text-amber-dark dark:text-amber hover:underline"
+                    >
+                      Edit Alerts
+                    </button>
+                  </div>
+                </div>
+
+                {/* Property preview */}
+                {previewProps && previewProps.items.length > 0 && (
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                      We found{" "}
+                      <span className="font-semibold text-foreground">
+                        {previewProps.total} properties
+                      </span>{" "}
+                      scored for you. These are your top 3:
+                    </p>
+                    <div className="grid gap-3">
+                      {previewProps.items.map((prop, i) => (
+                        <motion.div
+                          key={prop.id}
+                          initial={{ opacity: 0, y: 12 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: i * 0.15 }}
+                          className="rounded-xl border border-border/60 bg-card p-4 flex items-center gap-4"
+                        >
+                          <ScoreRing score={prop.score ?? 0} size={52} strokeWidth={3} showLabel={false} />
+                          <div className="flex-1 min-w-0">
+                            <p className="font-semibold text-sm truncate">
+                              {prop.address}
+                            </p>
+                            <p className="text-xs text-muted-foreground flex items-center gap-1">
+                              <MapPin className="h-3 w-3" />
+                              {prop.city}
+                            </p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="font-bold">
+                              {prop.price ? formatPrice(prop.price) : "N/A"}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {prop.beds}bd / {prop.baths}ba
+                            </p>
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </motion.div>
@@ -502,38 +946,51 @@ export default function OnboardPage() {
         <div className="flex items-center justify-between mt-10 pt-6 border-t border-border/60">
           <Button
             variant="ghost"
-            onClick={() => setStep(step - 1)}
-            disabled={step === 0 || saving}
+            onClick={handleBack}
+            disabled={step === 0 || saving || launching}
           >
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back
           </Button>
 
-          {step < 3 ? (
-            <Button
-              onClick={handleNext}
-              disabled={!canNext || saving}
-              className="bg-amber text-amber-foreground hover:bg-amber-dark"
-            >
-              {saving ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : null}
-              Continue
-              <ArrowRight className="ml-2 h-4 w-4" />
-            </Button>
-          ) : (
-            <Button
-              onClick={handleLaunch}
-              disabled={saving}
-              className="bg-amber text-amber-foreground hover:bg-amber-dark"
-            >
-              {saving ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : null}
-              Launch My Scout
-              <Zap className="ml-2 h-4 w-4" />
-            </Button>
-          )}
+          <div className="flex items-center gap-3">
+            {/* Skip link on step 4 */}
+            {step === 4 && (
+              <button
+                onClick={handleSkip}
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                disabled={launching}
+              >
+                Skip for now →
+              </button>
+            )}
+
+            {step < 4 ? (
+              <Button
+                onClick={handleNext}
+                disabled={!canNext || saving}
+                className="bg-amber text-amber-foreground hover:bg-amber-dark"
+              >
+                {saving ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : null}
+                Continue
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            ) : (
+              <Button
+                onClick={handleLaunch}
+                disabled={saving || launching}
+                className="bg-amber text-amber-foreground hover:bg-amber-dark px-8"
+              >
+                {launching ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : null}
+                Launch My Scout
+                <Zap className="ml-2 h-4 w-4" />
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     </div>
