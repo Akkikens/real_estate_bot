@@ -1,6 +1,6 @@
 "use client";
 
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
@@ -34,7 +34,7 @@ import {
   useRemoveFromWatchlist,
   useWatchlist,
 } from "@/lib/queries";
-import { useAuthStore } from "@/lib/stores";
+import { useAuth } from "@clerk/nextjs";
 import { useMemo, useState } from "react";
 
 function formatPrice(p: number) {
@@ -48,12 +48,11 @@ function formatCurrency(val: number) {
 
 export default function PropertyDetailPage() {
   const params = useParams();
-  const router = useRouter();
   const id = params.id as string;
 
   const { data: prop, isLoading, isError } = useProperty(id);
   const { data: uw } = useUnderwriting(id);
-  const { isAuthenticated } = useAuthStore();
+  const { isSignedIn } = useAuth();
 
   const { data: watchlist } = useWatchlist();
   const addToWatchlist = useAddToWatchlist();
@@ -67,8 +66,7 @@ export default function PropertyDetailPage() {
   const [showUnderwriting, setShowUnderwriting] = useState(false);
 
   const toggleSave = () => {
-    if (!isAuthenticated) {
-      router.push("/login");
+    if (!isSignedIn) {
       return;
     }
     if (isWatched) {

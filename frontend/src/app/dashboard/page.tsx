@@ -27,7 +27,8 @@ import {
   useRemoveFromWatchlist,
   useWatchlist,
 } from "@/lib/queries";
-import { useAuthStore } from "@/lib/stores";
+import { useAuth } from "@clerk/nextjs";
+import { useUser } from "@clerk/nextjs";
 import type { PropertyFilters } from "@/lib/types";
 
 // ── Quick filter definitions ─────────────────────────────────────────────────
@@ -144,7 +145,9 @@ function DashboardContent() {
   const { data, isLoading, isError, error, refetch, isFetching } =
     useProperties(resolvedFilters);
   const { data: stats } = useStats();
-  const { isAuthenticated } = useAuthStore();
+  const { isSignedIn } = useAuth();
+  const { user: clerkUser } = useUser();
+  const onboardingComplete = clerkUser?.publicMetadata?.onboarding_complete === true;
 
   // Watchlist state (only fetched if authenticated)
   const { data: watchlist } = useWatchlist();
@@ -201,8 +204,7 @@ function DashboardContent() {
   // ── Watchlist toggling ─────────────────────────────────────────────────────
   const toggleSave = useCallback(
     (propertyId: string) => {
-      if (!isAuthenticated) {
-        router.push("/login");
+      if (!isSignedIn) {
         return;
       }
       if (watchedIds.has(propertyId)) {
@@ -211,7 +213,7 @@ function DashboardContent() {
         addToWatchlist.mutate(propertyId);
       }
     },
-    [isAuthenticated, watchedIds, addToWatchlist, removeFromWatchlist, router]
+    [isSignedIn, watchedIds, addToWatchlist, removeFromWatchlist]
   );
 
   // ── Pagination ─────────────────────────────────────────────────────────────
@@ -221,6 +223,21 @@ function DashboardContent() {
   return (
     <div className="min-h-screen">
       <Navbar />
+
+      {/* Onboarding incomplete banner */}
+      {isSignedIn && !onboardingComplete && (
+        <motion.div
+          initial={{ y: -40, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          className="bg-amber/10 border-b border-amber/20 px-4 py-2.5 text-sm text-center"
+        >
+          Your scout isn&apos;t fully configured yet.{" "}
+          <a href="/onboard" className="font-semibold text-amber-dark dark:text-amber underline">
+            Finish setup →
+          </a>
+        </motion.div>
+      )}
+
       <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 sm:py-10">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
