@@ -25,7 +25,9 @@ import {
   useWatchlist,
   useRemoveFromWatchlist,
 } from "@/lib/queries";
-import { useAuthStore } from "@/lib/stores";
+import { useAuth, SignInButton } from "@clerk/nextjs";
+import { useTier } from "@/hooks/use-tier";
+import { UpgradePrompt } from "@/components/upgrade-prompt";
 
 function formatPrice(p: number) {
   if (p >= 1000000) return `$${(p / 1000000).toFixed(2)}M`;
@@ -63,12 +65,14 @@ function PriceChange({
 }
 
 export default function WatchlistPage() {
-  const { isAuthenticated, isLoading: authLoading } = useAuthStore();
+  const { isLoaded, isSignedIn } = useAuth();
   const { data: items, isLoading, isError, error } = useWatchlist();
   const removeFromWatchlist = useRemoveFromWatchlist();
+  const { isFree, watchlistLimit } = useTier();
+  const isAtLimit = isFree && (items?.length ?? 0) >= watchlistLimit;
 
   // ── Auth check ─────────────────────────────────────────────────────────────
-  if (!authLoading && !isAuthenticated) {
+  if (isLoaded && !isSignedIn) {
     return (
       <div className="min-h-screen">
         <Navbar />
@@ -76,9 +80,13 @@ export default function WatchlistPage() {
           <EmptyState
             title="Sign in to see your watchlist"
             description="Save properties from the dashboard to track price changes and manage your deal pipeline."
-            actionLabel="Sign In"
-            actionHref="/login"
-          />
+          >
+            <SignInButton mode="modal">
+              <Button className="bg-amber text-amber-foreground hover:bg-amber-dark">
+                Sign In
+              </Button>
+            </SignInButton>
+          </EmptyState>
         </div>
       </div>
     );
@@ -273,6 +281,15 @@ export default function WatchlistPage() {
                 </motion.div>
               ))}
             </AnimatePresence>
+
+            {/* Watchlist limit upgrade prompt */}
+            {isAtLimit && (
+              <UpgradePrompt
+                title="Watchlist is full"
+                description={`Free accounts can save up to ${watchlistLimit} properties. Upgrade to Pro for 100 watchlist slots.`}
+                className="mt-4"
+              />
+            )}
           </div>
         )}
       </div>
