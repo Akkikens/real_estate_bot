@@ -139,14 +139,14 @@ export function useUpdateWatchlistStage() {
 export function useUpdateProfile() {
   return useMutation({
     mutationFn: (body: { name?: string; phone?: string; market_id?: string }) =>
-      api.put<{ status: string; user: import("./types").User }>("/api/auth/profile", body),
+      api.put<{ status: string }>("/api/profile", body),
   });
 }
 
 export function useUpdatePreferences() {
   return useMutation({
     mutationFn: (body: Partial<import("./types").UserPreferences>) =>
-      api.put<import("./types").UserPreferences>("/api/auth/profile/preferences", body),
+      api.put<import("./types").UserPreferences>("/api/profile/preferences", body),
   });
 }
 
@@ -160,10 +160,40 @@ export function useMarkets() {
   });
 }
 
+// Hardcoded fallback so the UI works without backend running
+const BAY_AREA_FALLBACK: MarketDetail = {
+  id: "bay_area",
+  display_name: "Bay Area",
+  state: "CA",
+  timezone: "America/Los_Angeles",
+  transit_system_name: "BART",
+  num_cities: 15,
+  status: "available",
+  cities: [
+    "Richmond", "El Cerrito", "Albany", "Berkeley", "Oakland",
+    "Emeryville", "San Leandro", "Hayward", "Fremont", "Union City",
+    "Newark", "Milpitas", "San Jose", "Concord", "Walnut Creek",
+  ],
+  property_tax_rate: 0.0125,
+  closing_cost_pct: 0.025,
+  rent_price_ratio: 0.0045,
+  room_rental_low: 1000,
+  room_rental_mid: 1400,
+  room_rental_high: 1800,
+};
+
 export function useMarket(id: string) {
   return useQuery({
     queryKey: queryKeys.market(id),
-    queryFn: () => api.get<MarketDetail>(`/api/v1/markets/${id}`, { auth: false }),
+    queryFn: async () => {
+      try {
+        return await api.get<MarketDetail>(`/api/v1/markets/${id}`, { auth: false });
+      } catch {
+        // Fallback when backend is unavailable
+        if (id === "bay_area") return BAY_AREA_FALLBACK;
+        throw new Error(`Market ${id} not found`);
+      }
+    },
     enabled: !!id,
     staleTime: 1000 * 60 * 60,
   });
