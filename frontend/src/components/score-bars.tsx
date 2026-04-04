@@ -24,18 +24,19 @@ export function ScoreBars({ dimensions }: ScoreBarsProps) {
     <div className="space-y-3">
       {dimensions.map((dim, i) => {
         const max = dim.maxScore ?? 10;
-        const pct = (dim.score / max) * 100;
+        const score = dim.score ?? 0;
+        const pct = (score / max) * 100;
         return (
           <div key={dim.label}>
             <div className="flex items-center justify-between mb-1">
               <span className="text-sm font-medium">{dim.label}</span>
               <span className="text-sm text-muted-foreground font-mono">
-                {dim.score.toFixed(1)}/{max}
+                {score.toFixed(1)}/{max}
               </span>
             </div>
             <div className="h-2.5 rounded-full bg-muted overflow-hidden">
               <motion.div
-                className={`h-full rounded-full ${getBarColor(dim.score)}`}
+                className={`h-full rounded-full ${getBarColor(score)}`}
                 initial={{ width: 0 }}
                 animate={{ width: `${pct}%` }}
                 transition={{

@@ -1,17 +1,19 @@
-.gitignore
 # Secrets
 .env
+.env.local
+.env*.local
 .claw
 .clawd*
 
 # Logs
 *.log
+launchd.log
+launchd.err
 
 # Database (local SQLite)
 *.db
 *.db-shm
 *.db-wal
-.sandbox*
 
 # Python
 __pycache__/
@@ -37,12 +39,15 @@ env/
 # macOS
 .DS_Store
 
-# LaunchAgent logs
-launchd.log
-launchd.err
+# Node / Next.js
+node_modules/
+frontend/node_modules/
+frontend/.next/
+.next/
 
 # Claude Code
 .claude/
 
 # Sandbox
 .sandbox-home/
+.sandbox*

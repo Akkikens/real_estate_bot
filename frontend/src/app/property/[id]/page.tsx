@@ -124,7 +124,7 @@ export default function PropertyDetailPage() {
   }
 
   const pricePerSqft =
-    prop.price && prop.sqft ? Math.round(prop.price / prop.sqft) : null;
+    prop.list_price && prop.sqft ? Math.round(prop.list_price / prop.sqft) : null;
 
   return (
     <div className="min-h-screen">
@@ -161,7 +161,7 @@ export default function PropertyDetailPage() {
               ))}
             </div>
           </div>
-          <ScoreRing score={prop.score ?? 0} size={90} strokeWidth={5} />
+          <ScoreRing score={prop.total_score ?? 0} size={90} strokeWidth={5} />
         </div>
 
         <div className="grid lg:grid-cols-3 gap-8">
@@ -172,7 +172,7 @@ export default function PropertyDetailPage() {
               {[
                 {
                   label: "Price",
-                  value: prop.price ? formatPrice(prop.price) : "N/A",
+                  value: prop.list_price ? formatPrice(prop.list_price) : "N/A",
                   icon: DollarSign,
                 },
                 {
@@ -187,8 +187,8 @@ export default function PropertyDetailPage() {
                 },
                 {
                   label: "Transit",
-                  value: prop.bart_distance
-                    ? `${prop.bart_distance.toFixed(1)} mi`
+                  value: prop.bart_distance_miles
+                    ? `${prop.bart_distance_miles.toFixed(1)} mi`
                     : "N/A",
                   icon: Train,
                 },
@@ -487,14 +487,14 @@ export default function PropertyDetailPage() {
             )}
 
             {/* Transit info */}
-            {prop.bart_distance != null && (
+            {prop.bart_distance_miles != null && (
               <div className="rounded-xl border border-border/60 bg-card p-5">
                 <div className="flex items-center gap-2 mb-2">
                   <Train className="h-4 w-4 text-amber" />
                   <h3 className="font-semibold text-sm">Nearest Transit</h3>
                 </div>
                 <p className="text-sm">
-                  {prop.bart_distance.toFixed(1)} miles away
+                  {prop.bart_distance_miles.toFixed(1)} miles away
                 </p>
                 {prop.walk_score != null && (
                   <p className="text-xs text-muted-foreground mt-1">

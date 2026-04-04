@@ -33,13 +33,13 @@ export interface PropertySummary {
   city: string | null;
   state: string | null;
   zip_code: string | null;
-  price: number | null;
+  list_price: number | null;
   beds: number | null;
   baths: number | null;
   sqft: number | null;
   lot_size: string | null;
-  bart_distance: number | null;
-  score: number | null;
+  bart_distance_miles: number | null;
+  total_score: number | null;
   rating: string | null;
   tags: string[];
   listing_url: string | null;

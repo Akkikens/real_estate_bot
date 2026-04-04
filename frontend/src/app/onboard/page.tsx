@@ -914,7 +914,7 @@ export default function OnboardPage() {
                           transition={{ delay: i * 0.15 }}
                           className="rounded-xl border border-border/60 bg-card p-4 flex items-center gap-4"
                         >
-                          <ScoreRing score={prop.score ?? 0} size={52} strokeWidth={3} showLabel={false} />
+                          <ScoreRing score={prop.total_score ?? 0} size={52} strokeWidth={3} showLabel={false} />
                           <div className="flex-1 min-w-0">
                             <p className="font-semibold text-sm truncate">
                               {prop.address}
@@ -926,7 +926,7 @@ export default function OnboardPage() {
                           </div>
                           <div className="text-right shrink-0">
                             <p className="font-bold">
-                              {prop.price ? formatPrice(prop.price) : "N/A"}
+                              {prop.list_price ? formatPrice(prop.list_price) : "N/A"}
                             </p>
                             <p className="text-xs text-muted-foreground">
                               {prop.beds}bd / {prop.baths}ba
