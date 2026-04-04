@@ -15,8 +15,10 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    JSON,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -273,3 +275,78 @@ class PropertyAnomaly(Base):
     rejection_code: Mapped[str] = mapped_column(String(50))  # MOCK_DATA, NO_SOURCE_URL, PRICE_IMPLAUSIBLE, etc.
 
     flagged_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+
+
+# ─── User ────────────────────────────────────────────────────────────────────
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    avatar_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    market_id: Mapped[str] = mapped_column(String(60), default="bay_area")
+    subscription_tier: Mapped[str] = mapped_column(String(30), default="free")
+    stripe_customer_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    preferences: Mapped[Optional[UserPreferences]] = relationship(
+        "UserPreferences", back_populates="user", uselist=False, cascade="all, delete-orphan"
+    )
+    watchlist_items: Mapped[list[WatchlistItem]] = relationship(
+        "WatchlistItem", back_populates="user", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        return f"<User {self.email} tier={self.subscription_tier}>"
+
+
+# ─── UserPreferences ─────────────────────────────────────────────────────────
+
+
+class UserPreferences(Base):
+    __tablename__ = "user_preferences"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, nullable=False)
+
+    max_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    down_payment_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    target_cities: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    strategy: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
+    must_haves: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    scoring_weight_overrides: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    alert_channels: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    alert_time: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    rental_alert_time: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    alert_score_threshold: Mapped[int] = mapped_column(Integer, default=65)
+    timezone: Mapped[str] = mapped_column(String(60), default="America/Los_Angeles")
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
+
+    user: Mapped[User] = relationship("User", back_populates="preferences")
+
+
+# ─── WatchlistItem ───────────────────────────────────────────────────────────
+
+
+class WatchlistItem(Base):
+    __tablename__ = "watchlist_items"
+    __table_args__ = (UniqueConstraint("user_id", "property_id", name="uq_user_property"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    property_id: Mapped[str] = mapped_column(ForeignKey("properties.id"), nullable=False)
+    saved_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+    price_at_save: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    pipeline_stage: Mapped[str] = mapped_column(String(30), default="watching")
+
+    user: Mapped[User] = relationship("User", back_populates="watchlist_items")
+    property: Mapped[Property] = relationship("Property")
