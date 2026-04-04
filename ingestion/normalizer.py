@@ -70,6 +70,8 @@ def normalize(raw: dict[str, Any], source: str) -> dict[str, Any]:
     out: dict[str, Any] = {"source": source}
 
     for field in CANONICAL_FIELDS:
+        if field == "source":
+            continue  # source already set from function arg
         val = raw.get(field)
         if field in ("list_price", "original_price", "hoa_monthly",
                      "estimated_taxes_annual", "estimated_rent_monthly",
