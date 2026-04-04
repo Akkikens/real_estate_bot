@@ -113,5 +113,7 @@ try:
                 "(expected 1.0). Scores may drift — please check config.",
                 _total,
             )
-except Exception:
-    pass  # Don't crash startup over a validation check
+except Exception as _exc:
+    _logging.getLogger(__name__).warning(
+        "Could not validate scoring weights: %s", _exc
+    )
