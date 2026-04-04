@@ -1,19 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   Bookmark,
   Settings,
   Menu,
   X,
-  LogIn,
-  LogOut,
-  User,
 } from "lucide-react";
 import { useState } from "react";
-import { useAuthStore } from "@/lib/stores";
+import {
+  SignInButton,
+  SignUpButton,
+  UserButton,
+  Show,
+  useUser,
+} from "@clerk/nextjs";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -23,15 +26,9 @@ const navItems = [
 
 export function Navbar() {
   const pathname = usePathname();
-  const router = useRouter();
   const [open, setOpen] = useState(false);
-
-  const { user, isAuthenticated, logout } = useAuthStore();
-
-  const handleLogout = () => {
-    logout();
-    router.push("/");
-  };
+  const { user: clerkUser } = useUser();
+  const onboardingComplete = clerkUser?.publicMetadata?.onboarding_complete === true;
 
   return (
     <header className="sticky top-0 z-50 border-b border-border/60 bg-background/80 backdrop-blur-xl">
@@ -66,34 +63,38 @@ export function Navbar() {
           })}
 
           {/* Auth section */}
-          <div className="ml-2 pl-2 border-l border-border/60 flex items-center gap-1">
-            {isAuthenticated ? (
-              <>
-                <div className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm text-muted-foreground">
-                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-amber/20 text-amber-dark dark:text-amber text-xs font-semibold">
-                    {user?.name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || "U"}
-                  </div>
-                  <span className="hidden lg:inline max-w-[120px] truncate">
-                    {user?.name || user?.email?.split("@")[0]}
-                  </span>
-                </div>
-                <button
-                  onClick={handleLogout}
-                  className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                >
-                  <LogOut className="h-4 w-4" />
-                  <span className="hidden lg:inline">Logout</span>
+          <div className="ml-2 pl-2 border-l border-border/60 flex items-center gap-2">
+            <Show when="signed-out">
+              <SignInButton mode="modal">
+                <button className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer">
+                  Sign In
                 </button>
-              </>
-            ) : (
-              <Link
-                href="/login"
-                className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-              >
-                <LogIn className="h-4 w-4" />
-                Sign In
-              </Link>
-            )}
+              </SignInButton>
+              <SignUpButton mode="modal">
+                <button className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium bg-amber text-amber-foreground hover:bg-amber-dark transition-colors cursor-pointer">
+                  Sign Up
+                </button>
+              </SignUpButton>
+            </Show>
+            <Show when="signed-in">
+              {clerkUser && !onboardingComplete && (
+                <Link
+                  href="/onboard"
+                  className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium border border-amber/30 text-amber-dark dark:text-amber hover:bg-amber/10 transition-colors"
+                >
+                  Finish Setup
+                </Link>
+              )}
+              <UserButton
+                appearance={{
+                  elements: {
+                    avatarBox: "h-7 w-7",
+                    userButtonPopoverCard: "shadow-xl border border-border/60",
+                    userButtonPopoverActionButton: "hover:bg-amber/10",
+                  },
+                }}
+              />
+            </Show>
           </div>
         </nav>
 
@@ -130,28 +131,23 @@ export function Navbar() {
           })}
 
           {/* Mobile auth */}
-          <div className="mt-2 pt-2 border-t border-border/60">
-            {isAuthenticated ? (
-              <button
-                onClick={() => {
-                  handleLogout();
-                  setOpen(false);
+          <div className="mt-2 pt-2 border-t border-border/60 flex items-center gap-2 px-3">
+            <Show when="signed-out">
+              <SignInButton mode="modal">
+                <button className="text-sm font-medium text-muted-foreground hover:text-foreground cursor-pointer">
+                  Sign In
+                </button>
+              </SignInButton>
+            </Show>
+            <Show when="signed-in">
+              <UserButton
+                appearance={{
+                  elements: {
+                    avatarBox: "h-7 w-7",
+                  },
                 }}
-                className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:text-foreground w-full"
-              >
-                <LogOut className="h-4 w-4" />
-                Logout ({user?.email?.split("@")[0]})
-              </button>
-            ) : (
-              <Link
-                href="/login"
-                onClick={() => setOpen(false)}
-                className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted-foreground hover:text-foreground"
-              >
-                <LogIn className="h-4 w-4" />
-                Sign In
-              </Link>
-            )}
+              />
+            </Show>
           </div>
         </nav>
       )}

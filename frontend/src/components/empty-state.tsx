@@ -13,6 +13,7 @@ interface EmptyStateProps {
   actionLabel?: string;
   actionHref?: string;
   onAction?: () => void;
+  children?: React.ReactNode;
 }
 
 export function EmptyState({
@@ -22,6 +23,7 @@ export function EmptyState({
   actionLabel,
   actionHref,
   onAction,
+  children,
 }: EmptyStateProps) {
   return (
     <div className="text-center py-16 sm:py-20 rounded-xl border border-dashed border-border">
@@ -40,6 +42,7 @@ export function EmptyState({
           {actionLabel}
         </Button>
       )}
+      {children && <div className="mt-4">{children}</div>}
     </div>
   );
 }
