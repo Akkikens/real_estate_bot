@@ -5,6 +5,7 @@ import {
   User,
   Bell,
   CreditCard,
+  Shield,
   MapPin,
   Save,
   Check,
@@ -20,7 +21,7 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { useAuthStore } from "@/lib/stores";
+import { useAuth, useUser, SignInButton, UserProfile } from "@clerk/nextjs";
 import {
   useMarket,
   useUpdateProfile,
@@ -34,16 +35,10 @@ const TIER_LABELS: Record<string, { label: string; color: string }> = {
 };
 
 export default function SettingsPage() {
-  const {
-    user,
-    preferences,
-    isAuthenticated,
-    isLoading: authLoading,
-    loadUser,
-    setUser,
-  } = useAuthStore();
+  const { isLoaded, isSignedIn } = useAuth();
+  const { user: clerkUser } = useUser();
 
-  // ── Form state, seeded from auth store ──────────────────────────────────
+  // ── Form state, seeded from Clerk user ──────────────────────────────────
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [targetCities, setTargetCities] = useState<string[]>([]);
@@ -59,30 +54,19 @@ export default function SettingsPage() {
   const [profileSaved, setProfileSaved] = useState(false);
   const [prefsSaved, setPrefsSaved] = useState(false);
 
-  // Seed form from user/preferences once loaded
+  // Seed form from Clerk user once loaded
   useEffect(() => {
-    if (user) {
-      setName(user.name || "");
-      setPhone(user.phone || "");
+    if (clerkUser) {
+      setName(clerkUser.firstName || "");
+      setPhone(clerkUser.phoneNumbers[0]?.phoneNumber || "");
     }
-  }, [user]);
+  }, [clerkUser]);
 
-  useEffect(() => {
-    if (preferences) {
-      setTargetCities(preferences.target_cities || []);
-      setNotifications({
-        sms: preferences.alert_channels?.sms ?? true,
-        whatsapp: preferences.alert_channels?.whatsapp ?? false,
-        email: preferences.alert_channels?.email ?? true,
-      });
-      setAlertTime(preferences.alert_time || "08:00");
-      setRentalTime(preferences.rental_alert_time || "18:00");
-      setScoreThreshold(preferences.alert_score_threshold ?? 65);
-    }
-  }, [preferences]);
+  // TODO: Seed from API preferences once Clerk session tokens are wired to backend
+  // For now, defaults are used until the user saves.
 
   // Load market cities for the city picker
-  const marketId = user?.market_id || "bay_area";
+  const marketId = (clerkUser?.publicMetadata?.market_id as string) || "bay_area";
   const { data: market } = useMarket(marketId);
   const cities = market?.cities || [];
 
@@ -98,8 +82,7 @@ export default function SettingsPage() {
   // ── Save handlers ──────────────────────────────────────────────────────
   const handleSaveProfile = useCallback(async () => {
     try {
-      const result = await updateProfile.mutateAsync({ name, phone });
-      if (result.user) setUser(result.user);
+      await updateProfile.mutateAsync({ name, phone });
       // Also save target cities (part of preferences)
       await updatePreferences.mutateAsync({ target_cities: targetCities });
       setProfileSaved(true);
@@ -107,7 +90,7 @@ export default function SettingsPage() {
     } catch (err) {
       console.error("Failed to save profile:", err);
     }
-  }, [name, phone, targetCities, updateProfile, updatePreferences, setUser]);
+  }, [name, phone, targetCities, updateProfile, updatePreferences]);
 
   const handleSaveNotifications = useCallback(async () => {
     try {
@@ -119,15 +102,13 @@ export default function SettingsPage() {
       });
       setPrefsSaved(true);
       setTimeout(() => setPrefsSaved(false), 2000);
-      // Refresh auth store preferences
-      loadUser();
     } catch (err) {
       console.error("Failed to save notifications:", err);
     }
-  }, [notifications, alertTime, rentalTime, scoreThreshold, updatePreferences, loadUser]);
+  }, [notifications, alertTime, rentalTime, scoreThreshold, updatePreferences]);
 
   // ── Auth guard ─────────────────────────────────────────────────────────
-  if (!authLoading && !isAuthenticated) {
+  if (isLoaded && !isSignedIn) {
     return (
       <div className="min-h-screen">
         <Navbar />
@@ -136,15 +117,19 @@ export default function SettingsPage() {
             icon={LogIn}
             title="Sign in to access settings"
             description="Manage your profile, target cities, and notification preferences."
-            actionLabel="Sign In"
-            actionHref="/login"
-          />
+          >
+            <SignInButton mode="modal">
+              <Button className="bg-amber text-amber-foreground hover:bg-amber-dark">
+                Sign In
+              </Button>
+            </SignInButton>
+          </EmptyState>
         </div>
       </div>
     );
   }
 
-  const tier = TIER_LABELS[user?.subscription_tier || "free"];
+  const tier = TIER_LABELS[(clerkUser?.publicMetadata?.subscription_tier as string) || "free"];
 
   return (
     <div className="min-h-screen">
@@ -155,7 +140,7 @@ export default function SettingsPage() {
         </h1>
 
         <Tabs defaultValue="profile" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="profile" className="gap-2">
               <User className="h-4 w-4" />
               <span className="hidden sm:inline">Profile</span>
@@ -163,6 +148,10 @@ export default function SettingsPage() {
             <TabsTrigger value="notifications" className="gap-2">
               <Bell className="h-4 w-4" />
               <span className="hidden sm:inline">Notifications</span>
+            </TabsTrigger>
+            <TabsTrigger value="security" className="gap-2">
+              <Shield className="h-4 w-4" />
+              <span className="hidden sm:inline">Security</span>
             </TabsTrigger>
             <TabsTrigger value="subscription" className="gap-2">
               <CreditCard className="h-4 w-4" />
@@ -187,7 +176,7 @@ export default function SettingsPage() {
                   <Label>Email</Label>
                   <Input
                     type="email"
-                    value={user?.email || ""}
+                    value={clerkUser?.emailAddresses[0]?.emailAddress || ""}
                     disabled
                     className="opacity-60"
                   />
@@ -211,7 +200,7 @@ export default function SettingsPage() {
                     className="opacity-60"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Contact support to change market
+                    More markets coming soon (Austin, Denver)
                   </p>
                 </div>
               </div>
@@ -305,7 +294,7 @@ export default function SettingsPage() {
                   <div>
                     <p className="font-medium text-sm">Email Digest</p>
                     <p className="text-xs text-muted-foreground">
-                      Daily summary to {user?.email || "your email"}
+                      Daily summary to {clerkUser?.emailAddresses[0]?.emailAddress || "your email"}
                     </p>
                   </div>
                   <Switch
@@ -392,13 +381,36 @@ export default function SettingsPage() {
             </Button>
           </TabsContent>
 
+          {/* ── Security Tab (Clerk-managed) ────────────────────────── */}
+          <TabsContent value="security" className="space-y-6">
+            <div className="rounded-xl border border-border/60 bg-card p-6">
+              <p className="text-sm text-muted-foreground mb-4">
+                Manage your password, two-factor authentication, active sessions,
+                and connected accounts.
+              </p>
+              <UserProfile
+                appearance={{
+                  elements: {
+                    rootBox: "w-full",
+                    card: "shadow-none border-0 p-0",
+                    navbar: "hidden",
+                    pageScrollBox: "p-0",
+                    formButtonPrimary:
+                      "bg-amber hover:bg-amber-dark text-amber-foreground",
+                    footerActionLink: "text-amber-dark dark:text-amber",
+                  },
+                }}
+              />
+            </div>
+          </TabsContent>
+
           {/* ── Subscription Tab ────────────────────────────────────── */}
           <TabsContent value="subscription" className="space-y-6">
             <div
               className={`rounded-xl border p-6 ${
-                user?.subscription_tier === "pro"
+                (clerkUser?.publicMetadata?.subscription_tier as string) === "pro"
                   ? "border-amber/30 bg-amber/5"
-                  : user?.subscription_tier === "investor"
+                  : (clerkUser?.publicMetadata?.subscription_tier as string) === "investor"
                   ? "border-violet-500/30 bg-violet-500/5"
                   : "border-border/60 bg-card"
               }`}
@@ -409,23 +421,23 @@ export default function SettingsPage() {
                     {tier.label} Plan
                   </Badge>
                   <h2 className="font-semibold text-lg">
-                    {user?.subscription_tier === "free"
+                    {(clerkUser?.publicMetadata?.subscription_tier as string) === "free"
                       ? "$0/month"
-                      : user?.subscription_tier === "pro"
+                      : (clerkUser?.publicMetadata?.subscription_tier as string) === "pro"
                       ? "$19/month"
                       : "$49/month"}
                   </h2>
                   <p className="text-sm text-muted-foreground mt-1">
-                    {user?.subscription_tier === "free"
+                    {(clerkUser?.publicMetadata?.subscription_tier as string) === "free"
                       ? "Basic alerts and scoring"
-                      : user?.subscription_tier === "pro"
+                      : (clerkUser?.publicMetadata?.subscription_tier as string) === "pro"
                       ? "Unlimited cities, SMS + WhatsApp, full scoring"
                       : "Portfolio-grade intelligence with API access"}
                   </p>
-                  {user?.created_at && (
+                  {clerkUser?.createdAt && (
                     <p className="text-xs text-muted-foreground mt-2">
                       Member since{" "}
-                      {new Date(user.created_at).toLocaleDateString()}
+                      {new Date(clerkUser.createdAt).toLocaleDateString()}
                     </p>
                   )}
                 </div>
@@ -436,7 +448,7 @@ export default function SettingsPage() {
             <div className="rounded-xl border border-border/60 bg-card p-6 space-y-4">
               <h2 className="font-semibold text-lg">Plan Features</h2>
               <ul className="space-y-2 text-sm">
-                {(user?.subscription_tier === "investor"
+                {((clerkUser?.publicMetadata?.subscription_tier as string) === "investor"
                   ? [
                       "Everything in Pro",
                       "API access",
@@ -445,7 +457,7 @@ export default function SettingsPage() {
                       "Priority data refresh",
                       "Dedicated support",
                     ]
-                  : user?.subscription_tier === "pro"
+                  : (clerkUser?.publicMetadata?.subscription_tier as string) === "pro"
                   ? [
                       "Unlimited target cities",
                       "SMS + WhatsApp alerts",
@@ -469,7 +481,7 @@ export default function SettingsPage() {
               </ul>
             </div>
 
-            {user?.subscription_tier === "free" && (
+            {(clerkUser?.publicMetadata?.subscription_tier as string) === "free" && (
               <div className="rounded-xl border border-amber/20 bg-amber/5 p-6">
                 <h3 className="font-semibold text-lg mb-2">
                   Upgrade to Pro
@@ -484,7 +496,7 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {user?.subscription_tier !== "free" && (
+            {(clerkUser?.publicMetadata?.subscription_tier as string) !== "free" && (
               <div className="flex gap-3">
                 <Button variant="outline">Manage Billing</Button>
                 <Button
