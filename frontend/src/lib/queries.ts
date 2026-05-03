@@ -139,14 +139,14 @@ export function useUpdateWatchlistStage() {
 export function useUpdateProfile() {
   return useMutation({
     mutationFn: (body: { name?: string; phone?: string; market_id?: string }) =>
-      api.put<{ status: string }>("/api/auth/profile", body),
+      api.put<{ status: string }>("/api/profile", body),
   });
 }
 
 export function useUpdatePreferences() {
   return useMutation({
     mutationFn: (body: Partial<import("./types").UserPreferences>) =>
-      api.put<import("./types").UserPreferences>("/api/auth/profile/preferences", body),
+      api.put<import("./types").UserPreferences>("/api/profile/preferences", body),
   });
 }
 

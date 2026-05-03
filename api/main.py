@@ -29,7 +29,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-import config.settings  # noqa: F401 — load .env before anything reads env vars
 from config.logging import setup_logging
 
 setup_logging("api.log")
