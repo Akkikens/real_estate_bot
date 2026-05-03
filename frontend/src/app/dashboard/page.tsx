@@ -1,10 +1,9 @@
 "use client";
 
-import { Suspense, useCallback, useMemo, useState } from "react";
+import { Suspense, useCallback, useMemo } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import {
-  Search,
   RefreshCw,
   ChevronLeft,
   ChevronRight,
@@ -14,12 +13,11 @@ import {
   Star,
 } from "lucide-react";
 import { Navbar } from "@/components/navbar";
+import { DashboardFilters } from "@/components/dashboard-filters";
 import { PropertyCard } from "@/components/property-card";
 import { SkeletonCard } from "@/components/skeleton-card";
 import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import {
   useProperties,
   useStats,
@@ -31,55 +29,27 @@ import { useAuth } from "@clerk/nextjs";
 import { useUser } from "@clerk/nextjs";
 import type { PropertyFilters } from "@/lib/types";
 
-// ── Quick filter definitions ─────────────────────────────────────────────────
-
-const QUICK_FILTERS = [
-  { label: "All", key: "all" },
-  { label: "Excellent (80+)", key: "excellent" },
-  { label: "Good (65+)", key: "good" },
-  { label: "House Hack", key: "house_hack" },
-  { label: "Near BART", key: "near_bart" },
-  { label: "ADU", key: "adu" },
-  { label: "Large Lot", key: "large_lot" },
-] as const;
-
-const SORT_OPTIONS = [
-  { label: "Top Score", value: "score" },
-  { label: "Price ↑", value: "price" },
-  { label: "Newest", value: "newest" },
-  { label: "BART Distance", value: "bart" },
-] as const;
-
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function useFilterParams(): PropertyFilters & { quickFilter: string } {
+function useFilterParams() {
   const searchParams = useSearchParams();
 
   return useMemo(() => {
     const page = parseInt(searchParams.get("page") || "1", 10);
     const sort = (searchParams.get("sort") || "score") as PropertyFilters["sort"];
-    const min_score = searchParams.get("min_score")
-      ? parseFloat(searchParams.get("min_score")!)
-      : undefined;
-    const max_price = searchParams.get("max_price")
-      ? parseFloat(searchParams.get("max_price")!)
-      : undefined;
-    const min_beds = searchParams.get("min_beds")
-      ? parseInt(searchParams.get("min_beds")!, 10)
-      : undefined;
+    const min_score = searchParams.get("min_score") || undefined;
+    const max_price = searchParams.get("max_price") || undefined;
+    const min_beds = searchParams.get("min_beds") || undefined;
     const city = searchParams.get("city") || undefined;
-    const listing_type = (searchParams.get("listing_type") || undefined) as
-      | "sale"
-      | "rental"
-      | undefined;
+    const listing_type = searchParams.get("listing_type") || undefined;
     const adu_only = searchParams.get("adu_only") === "true";
     const q = searchParams.get("q") || undefined;
-    const quickFilter = searchParams.get("filter") || "all";
+    const filter = searchParams.get("filter") || "all";
 
     return {
       page,
       page_size: 21,
-      sort,
+      sort: sort || "score",
       min_score,
       max_price,
       min_beds,
@@ -87,7 +57,7 @@ function useFilterParams(): PropertyFilters & { quickFilter: string } {
       listing_type,
       adu_only: adu_only || undefined,
       q,
-      quickFilter,
+      filter,
     };
   }, [searchParams]);
 }
@@ -118,28 +88,39 @@ function DashboardContent() {
   const router = useRouter();
   const pathname = usePathname();
   const filterParams = useFilterParams();
-  const { quickFilter, ...apiFilters } = filterParams;
+  const { filter: quickFilter, ...rawFilters } = filterParams;
 
-  // ── Resolve quick filters into API params ──────────────────────────────────
+  // ── Resolve quick filters + URL params into API params ────────────────────
   const resolvedFilters: PropertyFilters = useMemo(() => {
-    const f = { ...apiFilters };
+    const f: PropertyFilters = {
+      page: rawFilters.page,
+      page_size: rawFilters.page_size,
+      sort: rawFilters.sort as PropertyFilters["sort"],
+      q: rawFilters.q,
+      city: rawFilters.city,
+      listing_type: rawFilters.listing_type as "sale" | "rental" | undefined,
+      adu_only: rawFilters.adu_only,
+    };
+
+    // Apply typed number filters
+    if (rawFilters.min_score) f.min_score = parseFloat(rawFilters.min_score);
+    if (rawFilters.max_price) f.max_price = parseFloat(rawFilters.max_price);
+    if (rawFilters.min_beds) f.min_beds = parseInt(rawFilters.min_beds, 10);
+
+    // Quick filter overrides
     switch (quickFilter) {
       case "excellent":
-        f.min_score = 80;
+        f.min_score = Math.max(f.min_score ?? 0, 80);
         break;
       case "good":
-        f.min_score = 65;
+        f.min_score = Math.max(f.min_score ?? 0, 65);
         break;
       case "adu":
         f.adu_only = true;
         break;
-      // house_hack and near_bart use tag-based filtering on the API side
-      // (not implemented as API params yet; they'll show via tag matching)
-      default:
-        break;
     }
     return f;
-  }, [apiFilters, quickFilter]);
+  }, [rawFilters, quickFilter]);
 
   // ── Data queries ───────────────────────────────────────────────────────────
   const { data, isLoading, isError, error, refetch, isFetching } =
@@ -147,7 +128,7 @@ function DashboardContent() {
   const { data: stats } = useStats();
   const { isSignedIn } = useAuth();
   const { user: clerkUser } = useUser();
-  const onboardingComplete = clerkUser?.publicMetadata?.onboarding_complete === true;
+  const onboardingComplete = clerkUser?.unsafeMetadata?.onboarding_complete === true;
 
   // Watchlist state (only fetched if authenticated)
   const { data: watchlist } = useWatchlist();
@@ -158,9 +139,6 @@ function DashboardContent() {
     if (!watchlist) return new Set<string>();
     return new Set(watchlist.map((w) => w.property_id));
   }, [watchlist]);
-
-  // ── Search state (local, debounced push to URL) ────────────────────────────
-  const [searchInput, setSearchInput] = useState(filterParams.q || "");
 
   // ── URL param updater ──────────────────────────────────────────────────────
   const setFilter = useCallback(
@@ -183,30 +161,10 @@ function DashboardContent() {
     [router, pathname]
   );
 
-  // Debounced search
-  const handleSearchSubmit = useCallback(
-    (e: React.FormEvent) => {
-      e.preventDefault();
-      setFilter({ q: searchInput || undefined });
-    },
-    [searchInput, setFilter]
-  );
-
-  const handleSearchKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter") {
-        setFilter({ q: searchInput || undefined });
-      }
-    },
-    [searchInput, setFilter]
-  );
-
   // ── Watchlist toggling ─────────────────────────────────────────────────────
   const toggleSave = useCallback(
     (propertyId: string) => {
-      if (!isSignedIn) {
-        return;
-      }
+      if (!isSignedIn) return;
       if (watchedIds.has(propertyId)) {
         removeFromWatchlist.mutate(propertyId);
       } else {
@@ -311,48 +269,22 @@ function DashboardContent() {
           </div>
         )}
 
-        {/* Search & Sort */}
-        <div className="space-y-3 mb-6">
-          <div className="flex gap-2">
-            <form onSubmit={handleSearchSubmit} className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search by address or city..."
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                onKeyDown={handleSearchKeyDown}
-                className="pl-9"
-              />
-            </form>
-            <select
-              value={filterParams.sort || "score"}
-              onChange={(e) => setFilter({ sort: e.target.value })}
-              className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
-            >
-              {SORT_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Quick filters */}
-          <div className="flex flex-wrap gap-2">
-            {QUICK_FILTERS.map((f) => (
-              <button
-                key={f.key}
-                onClick={() => setFilter({ filter: f.key })}
-                className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-                  quickFilter === f.key
-                    ? "border-amber bg-amber/10 text-amber-dark dark:text-amber"
-                    : "border-border text-muted-foreground hover:bg-muted"
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
+        {/* Filters */}
+        <div className="mb-6">
+          <DashboardFilters
+            filters={{
+              q: filterParams.q,
+              sort: filterParams.sort || "score",
+              filter: quickFilter,
+              listing_type: filterParams.listing_type,
+              min_score: filterParams.min_score,
+              max_price: filterParams.max_price,
+              min_beds: filterParams.min_beds,
+              city: filterParams.city,
+            }}
+            onFilterChange={setFilter}
+            totalResults={data?.total}
+          />
         </div>
 
         {/* ── Loading state ───────────────────────────────────────────────── */}
