@@ -17,7 +17,7 @@ import {
   TrendingUp,
   Zap,
 } from "lucide-react";
-import { SignUpButton } from "@clerk/nextjs";
+import { SignUpButton, Show } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
 import { Navbar } from "@/components/navbar";
 import { Footer } from "@/components/footer";
@@ -486,12 +486,22 @@ function InteractivePreview() {
           )}{" "}
           more properties waiting
         </p>
-        <SignUpButton mode="modal">
-          <Button className="bg-amber text-amber-foreground hover:bg-amber-dark cursor-pointer">
-            Get My Full Feed
-            <ArrowRight className="ml-2 h-4 w-4" />
-          </Button>
-        </SignUpButton>
+        <Show when="signed-out">
+          <SignUpButton mode="modal">
+            <Button className="bg-amber text-amber-foreground hover:bg-amber-dark cursor-pointer">
+              Get My Full Feed
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
+          </SignUpButton>
+        </Show>
+        <Show when="signed-in">
+          <Link href="/dashboard">
+            <Button className="bg-amber text-amber-foreground hover:bg-amber-dark cursor-pointer">
+              Go to Dashboard
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
+          </Link>
+        </Show>
       </div>
     </div>
   );
@@ -727,15 +737,28 @@ export default function LandingPage() {
                 variants={fade}
                 custom={3}
               >
-                <SignUpButton mode="modal">
-                  <Button
-                    size="lg"
-                    className="bg-amber text-amber-foreground hover:bg-amber-dark h-12 px-6 text-base cursor-pointer"
-                  >
-                    Get Started Free
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </Button>
-                </SignUpButton>
+                <Show when="signed-out">
+                  <SignUpButton mode="modal">
+                    <Button
+                      size="lg"
+                      className="bg-amber text-amber-foreground hover:bg-amber-dark h-12 px-6 text-base cursor-pointer"
+                    >
+                      Get Started Free
+                      <ArrowRight className="ml-2 h-4 w-4" />
+                    </Button>
+                  </SignUpButton>
+                </Show>
+                <Show when="signed-in">
+                  <Link href="/dashboard">
+                    <Button
+                      size="lg"
+                      className="bg-amber text-amber-foreground hover:bg-amber-dark h-12 px-6 text-base cursor-pointer"
+                    >
+                      Go to Dashboard
+                      <ArrowRight className="ml-2 h-4 w-4" />
+                    </Button>
+                  </Link>
+                </Show>
                 <a href="#pricing">
                   <Button
                     variant="outline"
@@ -1300,15 +1323,28 @@ export default function LandingPage() {
             </p>
 
             <div className="mt-8">
-              <SignUpButton mode="modal">
-                <Button
-                  size="lg"
-                  className="bg-amber text-amber-foreground hover:bg-amber-dark h-12 px-8 text-base cursor-pointer"
-                >
-                  Get Started Free
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Button>
-              </SignUpButton>
+              <Show when="signed-out">
+                <SignUpButton mode="modal">
+                  <Button
+                    size="lg"
+                    className="bg-amber text-amber-foreground hover:bg-amber-dark h-12 px-8 text-base cursor-pointer"
+                  >
+                    Get Started Free
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Button>
+                </SignUpButton>
+              </Show>
+              <Show when="signed-in">
+                <Link href="/dashboard">
+                  <Button
+                    size="lg"
+                    className="bg-amber text-amber-foreground hover:bg-amber-dark h-12 px-8 text-base cursor-pointer"
+                  >
+                    Go to Dashboard
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Button>
+                </Link>
+              </Show>
             </div>
 
             <div className="mt-6 flex flex-wrap justify-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
